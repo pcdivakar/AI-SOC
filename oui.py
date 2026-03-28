@@ -1,6 +1,4 @@
-# oui.py
 OUI_DB = {
-    # OT / Industrial
     "00:01:02": "Siemens AG",
     "00:0A:0B": "Rockwell Automation",
     "00:14:22": "Schneider Electric",
@@ -26,7 +24,6 @@ OUI_DB = {
     "00:23:8B": "Moxa",
     "00:90:CC": "Belden",
     "00:1B:77": "HMS Networks",
-    # IT / Networking
     "00:00:0C": "Cisco",
     "00:01:97": "HP",
     "00:0F:1F": "Dell",
@@ -41,14 +38,9 @@ OUI_DB = {
     "00:30:48": "IBM",
     "00:21:5A": "Apple",
     "00:16:CB": "Samsung",
-    # Add more as needed
 }
 
 def lookup_vendor(mac):
-    """Return vendor name based on first 3 bytes of MAC (OUI)."""
-    mac_upper = mac.upper()
-    # Normalize format: strip separators, take first 6 hex digits
-    mac_clean = mac_upper.replace(':', '').replace('-', '')[:6]
-    # Format as XX:XX:XX
+    mac_clean = mac.upper().replace(':', '').replace('-', '')[:6]
     oui = ':'.join([mac_clean[i:i+2] for i in (0,2,4)])
     return OUI_DB.get(oui, "Unknown")
