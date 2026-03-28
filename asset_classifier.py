@@ -1,8 +1,12 @@
 import requests
 from oui import lookup_vendor
-from pcap_analyzer import IT_SERVICE_PORTS
+from pcap_analyzer import IT_SERVICE_PORTS  # if needed, but it's imported from pcap_analyzer
 
 def classify_asset(ip_data, hf_token=None):
+    """
+    Takes a single IP data dictionary (as returned by analyze_pcap)
+    and returns a classification dictionary with additional fields.
+    """
     ip = ip_data["ip"]
     macs = ip_data["macs"]
     ports = ip_data["ports"]
@@ -13,6 +17,7 @@ def classify_asset(ip_data, hf_token=None):
     http_user_agents = ip_data["http_user_agents"]
     dns_queries = ip_data["dns_queries"]
     snmp_communities = ip_data["snmp_communities"]
+    cves = ip_data.get("cves", [])   # ← added
 
     # Vendor from MAC OUI
     vendor = "Unknown"
@@ -41,13 +46,14 @@ def classify_asset(ip_data, hf_token=None):
         else:
             # AI fallback
             if hf_token:
-                asset_type = ai_classify(ip, ports, hostnames, http_user_agents, dns_queries, snmp_communities, macs, hf_token)
+                asset_type = ai_classify(ip, ports, hostnames, http_user_agents,
+                                         dns_queries, snmp_communities, macs, hf_token)
                 confidence = "low (AI estimate)"
             else:
                 asset_type = "Unknown"
                 confidence = "low (no data)"
 
-    # Additional context
+    # Return all fields including cves
     return {
         "ip": ip,
         "asset_type": asset_type,
@@ -58,13 +64,15 @@ def classify_asset(ip_data, hf_token=None):
         "ot_protocols": ot_protocols,
         "http_user_agents": http_user_agents,
         "dns_queries": dns_queries,
-        "snmp_communities": snmp_communities
+        "snmp_communities": snmp_communities,
+        "cves": cves                   # ← added
     }
 
 def ai_classify(ip, ports, hostnames, ua, dns, snmp, macs, hf_token):
     """Use a large language model via Hugging Face to classify."""
     if not hf_token:
         return "Unknown (AI unavailable)"
+
     # Build detailed context
     context = f"IP: {ip}\n"
     if macs:
