@@ -1,63 +1,3 @@
-import os
-from groq import Groq
-from oui import lookup_vendor
-from pcap_analyzer import IT_SERVICE_PORTS
-
-def classify_asset(ip_data, groq_api_key=None):
-    ip = ip_data["ip"]
-    macs = ip_data["macs"]
-    ports = ip_data["ports"]
-    hostnames = ip_data["hostnames"]
-    ot_protocols = ip_data["ot_protocols"]
-    ot_asset_types = ip_data["ot_asset_types"]
-    ot_vendors = ip_data["ot_vendors"]
-    http_user_agents = ip_data["http_user_agents"]
-    dns_queries = ip_data["dns_queries"]
-    snmp_communities = ip_data["snmp_communities"]
-    cves = ip_data.get("cves", [])
-
-    vendor = "Unknown"
-    for mac in macs:
-        vendor = lookup_vendor(mac)
-        if vendor != "Unknown":
-            break
-    if ot_vendors:
-        vendor = ", ".join(ot_vendors)
-
-    if ot_asset_types:
-        asset_type = " / ".join(ot_asset_types)
-        confidence = "high (OT protocol)"
-    else:
-        it_service = None
-        for port in ports:
-            if port in IT_SERVICE_PORTS:
-                it_service = IT_SERVICE_PORTS[port]
-                break
-        if it_service:
-            asset_type = it_service
-            confidence = "medium (port based)"
-        else:
-            if groq_api_key:
-                asset_type = ai_classify_groq(ip, ports, hostnames, http_user_agents, dns_queries, snmp_communities, macs, groq_api_key)
-                confidence = "low (AI estimate)"
-            else:
-                asset_type = "Unknown"
-                confidence = "low (no data)"
-
-    return {
-        "ip": ip,
-        "asset_type": asset_type,
-        "confidence": confidence,
-        "vendor": vendor,
-        "ports": ports,
-        "hostnames": hostnames,
-        "ot_protocols": ot_protocols,
-        "http_user_agents": http_user_agents,
-        "dns_queries": dns_queries,
-        "snmp_communities": snmp_communities,
-        "cves": cves
-    }
-
 def ai_classify_groq(ip, ports, hostnames, ua, dns, snmp, macs, groq_api_key):
     if not groq_api_key:
         return "Unknown (AI unavailable)"
@@ -80,7 +20,7 @@ def ai_classify_groq(ip, ports, hostnames, ua, dns, snmp, macs, groq_api_key):
     try:
         response = client.chat.completions.create(
             messages=[{"role": "user", "content": context}],
-            model="llama3-8b-8192",
+            model="llama-3.1-8b-instant",   # Updated model
             temperature=0.1,
             max_tokens=20,
         )
