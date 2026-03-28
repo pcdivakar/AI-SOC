@@ -3,3 +3,4 @@ scapy
 requests
 pandas
 python-dotenv
+groq
