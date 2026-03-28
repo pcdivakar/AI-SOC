@@ -5,105 +5,83 @@ import pandas as pd
 from dotenv import load_dotenv
 import utils
 from pcap_analyzer import analyze_pcap
+from asset_classifier import classify_asset
 from vulnerability import fetch_nvd, fetch_epss, fetch_kev_status
-from chatbot import ask_ai
 
-# Load environment variables (local development)
 load_dotenv()
-
-# Initialize database
 utils.init_db()
 
-# Set page config
-st.set_page_config(page_title="AI PCAP Analyzer", layout="wide")
-st.title("🛡️ AI PCAP Analyzer with Vulnerability Intelligence")
+st.set_page_config(page_title="AI PCAP Analyzer - OT Asset Intelligence", layout="wide")
+st.title("🛡️ AI PCAP Analyzer with OT Asset Classification & Vulnerability Intelligence")
 
-# Get API keys from secrets (Streamlit Cloud) or env (local)
+# Get API keys
 nvd_api_key = st.secrets.get("NVD_API_KEY", os.getenv("NVD_API_KEY"))
 hf_token = st.secrets.get("HF_API_TOKEN", os.getenv("HF_API_TOKEN"))
 
-# Sidebar for configuration
 with st.sidebar:
     st.header("Configuration")
     if not nvd_api_key:
         st.warning("NVD API key not set. NVD queries may fail.")
     if not hf_token:
-        st.warning("Hugging Face token not set. AI chatbot disabled.")
+        st.info("Hugging Face token not set. AI classification disabled.")
     st.markdown("---")
-    st.markdown("### How to use")
-    st.markdown("1. Upload a PCAP file.")
-    st.markdown("2. The tool extracts CVEs found in packet payloads.")
-    st.markdown("3. It fetches vulnerability data (NVD, EPSS, KEV).")
-    st.markdown("4. Ask questions about the traffic or vulnerabilities using the AI assistant.")
+    st.markdown("Upload a PCAP file to see asset classification and vulnerability data.")
+    st.markdown("**Supported OT protocols**: Modbus, S7, DNP3, BACnet, EtherNet/IP, IEC 104, OPC UA, CODESYS, Profinet, EtherCAT, CANopen, MQTT, IEC 61850, and more.")
 
-# File uploader
 uploaded_file = st.file_uploader("Choose a PCAP file", type=["pcap", "pcapng"])
-if uploaded_file is not None:
-    # Save to a temporary file
+if uploaded_file:
     with tempfile.NamedTemporaryFile(delete=False, suffix=".pcap") as tmp:
         tmp.write(uploaded_file.getbuffer())
         tmp_path = tmp.name
 
     with st.spinner("Analyzing PCAP..."):
-        analysis = analyze_pcap(tmp_path)
+        ip_data = analyze_pcap(tmp_path)
 
-    st.success("Analysis complete!")
-    st.subheader("📊 PCAP Summary")
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        st.metric("Unique IPs", len(analysis["ips"]))
-    with col2:
-        st.metric("Unique Hostnames", len(analysis["hostnames"]))
-    with col3:
-        st.metric("CVEs Found", len(analysis["cves"]))
+    st.success(f"Analyzed {len(ip_data)} unique IPs")
 
-    # Show packet summary in expander
-    with st.expander("Packet Summaries (first 500)"):
-        st.text("\n".join(analysis["summary"][:500]))
+    # Classify each IP
+    with st.spinner("Classifying assets..."):
+        classified = []
+        for ip, data in ip_data.items():
+            asset = classify_asset(data, hf_token)
+            classified.append(asset)
 
-    # Show extracted CVEs
-    if analysis["cves"]:
-        st.subheader("🔍 Extracted CVEs")
-        cve_list = analysis["cves"]
-        # Fetch enrichment data
-        enriched = []
-        for cve in cve_list:
-            with st.spinner(f"Fetching data for {cve}..."):
-                nvd_data = fetch_nvd(cve, nvd_api_key) if nvd_api_key else None
-                epss = fetch_epss(cve)
-                kev = fetch_kev_status(cve)
-                enriched.append({
-                    "CVE": cve,
-                    "EPSS Score": epss if epss is not None else "N/A",
-                    "KEV": "Yes" if kev else "No",
-                    "Description": nvd_data.get("descriptions", [{}])[0].get("value", "N/A")[:200] if nvd_data else "N/A"
-                })
-        df = pd.DataFrame(enriched)
-        st.dataframe(df, use_container_width=True)
+    df_assets = pd.DataFrame(classified)
+    # Reorder columns for readability
+    cols = ["ip", "asset_type", "confidence", "vendor", "ports", "hostnames", "ot_protocols", "http_user_agents", "dns_queries", "snmp_communities"]
+    df_assets = df_assets[cols]
+
+    # Show OT assets first
+    st.subheader("🏭 OT/ICS Assets")
+    ot_mask = df_assets["ot_protocols"].apply(lambda x: len(x) > 0)
+    ot_assets = df_assets[ot_mask]
+    if not ot_assets.empty:
+        st.dataframe(ot_assets, use_container_width=True)
     else:
-        st.info("No CVE identifiers found in the packet payloads.")
+        st.info("No OT/ICS protocols detected.")
 
-    # AI Chatbot
-    st.subheader("🤖 AI Assistant")
-    if hf_token:
-        # Build context for AI: include summary, CVEs, IPs, hostnames
-        context = f"PCAP analysis result:\n"
-        context += f"- Number of packets processed: {len(analysis['summary'])}\n"
-        context += f"- Unique IPs: {', '.join(analysis['ips'][:20])}\n"
-        context += f"- Unique hostnames: {', '.join(analysis['hostnames'][:20])}\n"
-        if analysis['cves']:
-            context += f"- CVEs found: {', '.join(analysis['cves'])}\n"
-        else:
-            context += "- No CVEs were found in packet payloads.\n"
+    # Show all assets
+    st.subheader("📡 All Detected Assets")
+    st.dataframe(df_assets, use_container_width=True)
 
-        user_question = st.text_area("Ask a question about this PCAP (e.g., 'What are the top 3 CVEs by EPSS score?')")
-        if st.button("Ask AI") and user_question:
-            with st.spinner("Thinking..."):
-                answer = ask_ai(user_question, context, hf_token=hf_token)
-            st.markdown("**AI Response:**")
-            st.write(answer)
+    # Vulnerability enrichment (optional)
+    if nvd_api_key:
+        st.subheader("🔍 Vulnerability Enrichment")
+        all_cves = set()
+        # Simple: we could search NVD for known software versions, but for demo we rely on user input
+        # Alternatively, we can let user select IP to query
+        selected_ip = st.selectbox("Select an IP to query CVEs for:", df_assets["ip"].tolist())
+        if selected_ip:
+            # Here we would need to map IP to software versions. For simplicity, just show placeholder.
+            st.write(f"Showing vulnerabilities for {selected_ip}:")
+            # Placeholder: You can extend to search NVD by product names from HTTP User-Agent or hostnames
+            st.info("Full CVE integration requires mapping IP to software versions. This demo shows how you would query.")
+            # Example: query NVD for a product from hostnames
+            host = df_assets[df_assets["ip"] == selected_ip]["hostnames"].values[0]
+            if host:
+                st.write(f"Could query NVD for {host[0] if host else 'unknown'}")
     else:
-        st.error("Hugging Face token not configured. Please add it to secrets to use the AI chatbot.")
+        st.info("Add NVD API key to see vulnerability data.")
 
     # Cleanup
     os.unlink(tmp_path)
