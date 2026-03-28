@@ -2,7 +2,7 @@ import requests
 
 def ask_ai(question, context, model_id="mistralai/Mistral-7B-Instruct-v0.2", hf_token=None):
     """
-    Send a prompt to Hugging Face Inference API and return the response.
+    Send a prompt to Hugging Face Inference API (new router endpoint) and return the response.
     """
     if not hf_token:
         return "Error: Hugging Face token not configured."
@@ -14,7 +14,8 @@ def ask_ai(question, context, model_id="mistralai/Mistral-7B-Instruct-v0.2", hf_
     # Prompt format for Mistral Instruct
     prompt = f"<s>[INST] {system_msg}\n{user_msg} [/INST]"
 
-    api_url = f"https://api-inference.huggingface.co/models/{model_id}"
+    # New endpoint
+    api_url = f"https://router.huggingface.co/hf-inference/models/{model_id}"
     headers = {"Authorization": f"Bearer {hf_token}"}
     payload = {"inputs": prompt, "parameters": {"max_new_tokens": 300, "temperature": 0.7}}
 
