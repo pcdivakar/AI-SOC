@@ -5,30 +5,20 @@ from datetime import datetime, timedelta
 DB_PATH = "cache.db"
 
 def init_db():
-    """Create tables if they don't exist."""
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
-    c.execute('''
-        CREATE TABLE IF NOT EXISTS nvd_cache (
-            cve_id TEXT PRIMARY KEY,
-            data TEXT,
-            fetched_at TIMESTAMP
-        )
-    ''')
-    c.execute('''
-        CREATE TABLE IF NOT EXISTS epss_cache (
-            cve_id TEXT PRIMARY KEY,
-            score REAL,
-            fetched_at TIMESTAMP
-        )
-    ''')
-    c.execute('''
-        CREATE TABLE IF NOT EXISTS kev_cache (
-            cve_id TEXT PRIMARY KEY,
-            status BOOLEAN,
-            fetched_at TIMESTAMP
-        )
-    ''')
+    c.execute('''CREATE TABLE IF NOT EXISTS nvd_cache (
+                    cve_id TEXT PRIMARY KEY,
+                    data TEXT,
+                    fetched_at TIMESTAMP)''')
+    c.execute('''CREATE TABLE IF NOT EXISTS epss_cache (
+                    cve_id TEXT PRIMARY KEY,
+                    score REAL,
+                    fetched_at TIMESTAMP)''')
+    c.execute('''CREATE TABLE IF NOT EXISTS kev_cache (
+                    cve_id TEXT PRIMARY KEY,
+                    status BOOLEAN,
+                    fetched_at TIMESTAMP)''')
     conn.commit()
     conn.close()
 
@@ -56,7 +46,6 @@ def save_cached_nvd(cve_id, data):
     conn.commit()
     conn.close()
 
-# Similar for EPSS and KEV…
 def get_cached_epss(cve_id):
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
