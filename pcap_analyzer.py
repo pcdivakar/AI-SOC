@@ -64,12 +64,6 @@ OT_PROTOCOLS = {
         "asset_type": "EtherCAT Slave",
         "vendor": None
     },
-    "CANopen": {
-        "ports": [],
-        "signatures": [b'\x01\x00', b'\x02\x00'],  # Over Ethernet? Usually via CAN, not IP
-        "asset_type": "CANopen Device",
-        "vendor": None
-    },
     "MQTT": {
         "ports": [1883, 8883],
         "signatures": [b'MQTT'],
@@ -84,7 +78,7 @@ OT_PROTOCOLS = {
     },
     "IEC 61850 MMS": {
         "ports": [102],
-        "signatures": [b'\x28\x01\x00', b'\x28\x02'],  # MMS PDU
+        "signatures": [b'\x28\x01\x00', b'\x28\x02'],
         "asset_type": "IED (IEC 61850)",
         "vendor": None
     },
@@ -102,7 +96,7 @@ OT_PROTOCOLS = {
     }
 }
 
-# IT Service Ports (for rule-based classification)
+# IT Service Ports (for classification)
 IT_SERVICE_PORTS = {
     80: "Web Server (HTTP)",
     443: "Web Server (HTTPS)",
@@ -132,7 +126,10 @@ IT_SERVICE_PORTS = {
 }
 
 def detect_ot_protocol(packet):
-    """Return (protocol_name, asset_type, vendor) if packet matches an OT signature."""
+    """
+    Detect OT/ICS protocol from a packet.
+    Returns (protocol_name, asset_type, vendor) if a match is found, else (None, None, None).
+    """
     if not (TCP in packet or UDP in packet):
         return None, None, None
     dst_port = packet.dport if hasattr(packet, 'dport') else None
@@ -147,16 +144,31 @@ def detect_ot_protocol(packet):
         for sig in info["signatures"]:
             if payload.startswith(sig):
                 return proto, info["asset_type"], info["vendor"]
-        # If no signatures but port matched, still consider it (low confidence)
+        # If no signature but port matched, still consider it (low confidence)
         if info["ports"] and dst_port in info["ports"]:
             return proto, info["asset_type"], info["vendor"]
     return None, None, None
 
 def analyze_pcap(pcap_path, max_packets=10000):
+    """
+    Analyze a pcap file and return a dictionary keyed by IP address, each containing:
+      - ip: the IP address
+      - macs: list of MAC addresses associated with this IP
+      - ports: list of ports seen (source or destination)
+      - hostnames: list of hostnames (HTTP Host, TLS SNI)
+      - ot_protocols: list of OT protocols detected for this IP
+      - ot_asset_types: list of asset types derived from OT protocols
+      - ot_vendors: list of vendors from OT protocols
+      - http_user_agents: list of HTTP User-Agent strings
+      - dns_queries: list of DNS queries made by this IP
+      - snmp_communities: list of SNMP community strings seen
+      - cves: list of CVEs extracted from packet payloads (e.g., 'CVE-2023-12345')
+    """
     packets = rdpcap(pcap_path)
     if len(packets) > max_packets:
         packets = packets[:max_packets]
 
+    # Data structure: IP -> dict of collected info
     ip_data = defaultdict(lambda: {
         "ip": None,
         "macs": set(),
@@ -168,10 +180,10 @@ def analyze_pcap(pcap_path, max_packets=10000):
         "http_user_agents": set(),
         "dns_queries": set(),
         "snmp_communities": set(),
-        "traffic_summary": []
+        "cves": set()
     })
 
-    # First pass: gather IP-MAC mapping from ARP and Ethernet
+    # First pass: build IP->MAC mapping from ARP replies and Ethernet/IP packets
     ip_mac = {}
     for pkt in packets:
         if ARP in pkt and pkt[ARP].op == 2:  # ARP reply
@@ -179,22 +191,24 @@ def analyze_pcap(pcap_path, max_packets=10000):
         elif Ether in pkt and IP in pkt:
             ip_mac[pkt[IP].src] = pkt[Ether].src
 
-    # Second pass: process packets
+    # Second pass: process each packet
     for pkt in packets:
-        # Get IP and MAC
+        # Skip non-IP packets
         if IP not in pkt:
             continue
+
         src_ip = pkt[IP].src
         dst_ip = pkt[IP].dst
 
-        # Initialize entries
+        # Initialize entries if not already
         for ip in [src_ip, dst_ip]:
             if ip_data[ip]["ip"] is None:
                 ip_data[ip]["ip"] = ip
+            # Add MAC if known
             if ip in ip_mac:
                 ip_data[ip]["macs"].add(ip_mac[ip])
 
-        # Ports
+        # Add ports (for both src and dst)
         if TCP in pkt or UDP in pkt:
             sport = pkt.sport if hasattr(pkt, 'sport') else None
             dport = pkt.dport if hasattr(pkt, 'dport') else None
@@ -205,7 +219,7 @@ def analyze_pcap(pcap_path, max_packets=10000):
                 ip_data[src_ip]["ports"].add(dport)
                 ip_data[dst_ip]["ports"].add(dport)
 
-        # OT protocol detection (only for destination IP)
+        # OT protocol detection (assume destination IP is the device)
         proto, asset_type, vendor = detect_ot_protocol(pkt)
         if proto:
             ip_data[dst_ip]["ot_protocols"].add(proto)
@@ -214,7 +228,7 @@ def analyze_pcap(pcap_path, max_packets=10000):
             if vendor:
                 ip_data[dst_ip]["ot_vendors"].add(vendor)
 
-        # HTTP and TLS detection
+        # Extract info from payload
         if Raw in pkt:
             payload = bytes(pkt[Raw].load)
             # HTTP Host header
@@ -227,28 +241,36 @@ def analyze_pcap(pcap_path, max_packets=10000):
             if ua_match:
                 ua = ua_match.group(1).decode(errors='ignore')
                 ip_data[src_ip]["http_user_agents"].add(ua)
-            # TLS SNI
+            # TLS SNI (simplified)
             if TCP in pkt and pkt.dport == 443 and payload.startswith(b'\x16'):
-                # Very basic SNI extraction (simplified)
+                # Very basic SNI extraction (look for extension type 0x00)
+                # A better method would use a proper TLS parser
                 sni_match = re.search(rb'\x00\x00\x00([^\x00]+)', payload)
                 if sni_match:
                     sni = sni_match.group(1).decode(errors='ignore')
                     ip_data[dst_ip]["hostnames"].add(sni)
-            # SNMP community string (UDP 161)
+            # SNMP community (UDP 161)
             if UDP in pkt and pkt.dport == 161 and payload.startswith(b'\x30'):
-                # Try to extract community from SNMPv1/v2c
-                # Simplified: find printable string after version
+                # Try to extract community from SNMPv1/v2c (ASN.1 BER)
+                # Simplified: find printable string after version field
                 parts = payload.split(b'\x04')
                 if len(parts) >= 2:
                     community = parts[1].split(b'\x00')[0].decode(errors='ignore')
                     ip_data[dst_ip]["snmp_communities"].add(community)
-        # DNS queries
+            # Extract CVEs from payload (text)
+            payload_str = payload.decode(errors='ignore')
+            cve_matches = re.findall(r'CVE-\d{4}-\d{4,7}', payload_str, re.IGNORECASE)
+            for cve in cve_matches:
+                ip_data[dst_ip]["cves"].add(cve.upper())
+
+        # DNS queries (source IP makes query)
         if DNS in pkt and pkt[DNS].qr == 0:  # query
             for q in pkt[DNS].qd:
                 if q.qname:
-                    ip_data[src_ip]["dns_queries"].add(q.qname.decode(errors='ignore').rstrip('.'))
+                    qname = q.qname.decode(errors='ignore').rstrip('.')
+                    ip_data[src_ip]["dns_queries"].add(qname)
 
-    # Convert sets to lists
+    # Convert sets to lists for JSON serialization
     for ip, data in ip_data.items():
         data["macs"] = list(data["macs"])
         data["ports"] = sorted(data["ports"])
@@ -259,5 +281,6 @@ def analyze_pcap(pcap_path, max_packets=10000):
         data["http_user_agents"] = list(data["http_user_agents"])
         data["dns_queries"] = list(data["dns_queries"])
         data["snmp_communities"] = list(data["snmp_communities"])
+        data["cves"] = list(data["cves"])
 
     return ip_data
