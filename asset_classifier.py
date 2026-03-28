@@ -1,14 +1,9 @@
 import os
-import requests
+from groq import Groq
 from oui import lookup_vendor
 from pcap_analyzer import IT_SERVICE_PORTS
-from groq import Groq
 
 def classify_asset(ip_data, groq_api_key=None):
-    """
-    Takes a single IP data dictionary and returns a classification dictionary.
-    If groq_api_key is provided, uses Groq for AI fallback.
-    """
     ip = ip_data["ip"]
     macs = ip_data["macs"]
     ports = ip_data["ports"]
@@ -21,7 +16,6 @@ def classify_asset(ip_data, groq_api_key=None):
     snmp_communities = ip_data["snmp_communities"]
     cves = ip_data.get("cves", [])
 
-    # Vendor from MAC OUI
     vendor = "Unknown"
     for mac in macs:
         vendor = lookup_vendor(mac)
@@ -30,7 +24,6 @@ def classify_asset(ip_data, groq_api_key=None):
     if ot_vendors:
         vendor = ", ".join(ot_vendors)
 
-    # Asset type
     if ot_asset_types:
         asset_type = " / ".join(ot_asset_types)
         confidence = "high (OT protocol)"
@@ -44,12 +37,8 @@ def classify_asset(ip_data, groq_api_key=None):
             asset_type = it_service
             confidence = "medium (port based)"
         else:
-            # AI fallback using Groq
             if groq_api_key:
-                asset_type = ai_classify_groq(
-                    ip, ports, hostnames, http_user_agents,
-                    dns_queries, snmp_communities, macs, groq_api_key
-                )
+                asset_type = ai_classify_groq(ip, ports, hostnames, http_user_agents, dns_queries, snmp_communities, macs, groq_api_key)
                 confidence = "low (AI estimate)"
             else:
                 asset_type = "Unknown"
@@ -70,11 +59,8 @@ def classify_asset(ip_data, groq_api_key=None):
     }
 
 def ai_classify_groq(ip, ports, hostnames, ua, dns, snmp, macs, groq_api_key):
-    """Use Groq's LLM to classify the device type."""
     if not groq_api_key:
         return "Unknown (AI unavailable)"
-
-    # Build detailed context
     context = f"IP: {ip}\n"
     if macs:
         context += f"MAC(s): {', '.join(macs)}\n"
@@ -93,11 +79,8 @@ def ai_classify_groq(ip, ports, hostnames, ua, dns, snmp, macs, groq_api_key):
     client = Groq(api_key=groq_api_key)
     try:
         response = client.chat.completions.create(
-            messages=[
-                {"role": "system", "content": "You are an industrial asset classifier."},
-                {"role": "user", "content": context}
-            ],
-            model="llama3-8b-8192",   # fast model for classification
+            messages=[{"role": "user", "content": context}],
+            model="llama3-8b-8192",
             temperature=0.1,
             max_tokens=20,
         )
