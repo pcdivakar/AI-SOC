@@ -1,11 +1,13 @@
+import os
 import requests
 from oui import lookup_vendor
 from pcap_analyzer import IT_SERVICE_PORTS
+from groq import Groq
 
-def classify_asset(ip_data, hf_token=None):
+def classify_asset(ip_data, groq_api_key=None):
     """
-    Takes a single IP data dictionary (as returned by analyze_pcap)
-    and returns a classification dictionary with additional fields.
+    Takes a single IP data dictionary and returns a classification dictionary.
+    If groq_api_key is provided, uses Groq for AI fallback.
     """
     ip = ip_data["ip"]
     macs = ip_data["macs"]
@@ -42,9 +44,12 @@ def classify_asset(ip_data, hf_token=None):
             asset_type = it_service
             confidence = "medium (port based)"
         else:
-            if hf_token:
-                asset_type = ai_classify(ip, ports, hostnames, http_user_agents,
-                                         dns_queries, snmp_communities, macs, hf_token)
+            # AI fallback using Groq
+            if groq_api_key:
+                asset_type = ai_classify_groq(
+                    ip, ports, hostnames, http_user_agents,
+                    dns_queries, snmp_communities, macs, groq_api_key
+                )
                 confidence = "low (AI estimate)"
             else:
                 asset_type = "Unknown"
@@ -64,9 +69,9 @@ def classify_asset(ip_data, hf_token=None):
         "cves": cves
     }
 
-def ai_classify(ip, ports, hostnames, ua, dns, snmp, macs, hf_token):
-    """Use Hugging Face Inference API to classify the device."""
-    if not hf_token:
+def ai_classify_groq(ip, ports, hostnames, ua, dns, snmp, macs, groq_api_key):
+    """Use Groq's LLM to classify the device type."""
+    if not groq_api_key:
         return "Unknown (AI unavailable)"
 
     # Build detailed context
@@ -85,19 +90,17 @@ def ai_classify(ip, ports, hostnames, ua, dns, snmp, macs, hf_token):
         context += f"SNMP communities: {', '.join(snmp)}\n"
     context += "Based on this traffic, what type of device is this likely to be? Choose from: PLC, RTU, HMI, Industrial Controller, Web Server, Database Server, Router, Switch, Firewall, IoT Device, Workstation, or Other. Answer with only the device type."
 
-    # Use a reliable free model
-    model_id = "google/flan-t5-base"
-    api_url = f"https://api-inference.huggingface.co/models/{model_id}"
-    headers = {"Authorization": f"Bearer {hf_token}"}
-    payload = {"inputs": context, "parameters": {"max_new_tokens": 20, "temperature": 0.1}}
-
+    client = Groq(api_key=groq_api_key)
     try:
-        resp = requests.post(api_url, headers=headers, json=payload, timeout=15)
-        if resp.status_code != 200:
-            return f"Error: {resp.status_code}"
-        result = resp.json()
-        if isinstance(result, list) and len(result) > 0:
-            return result[0].get("generated_text", "").strip()
-        return "Unknown"
+        response = client.chat.completions.create(
+            messages=[
+                {"role": "system", "content": "You are an industrial asset classifier."},
+                {"role": "user", "content": context}
+            ],
+            model="llama3-8b-8192",   # fast model for classification
+            temperature=0.1,
+            max_tokens=20,
+        )
+        return response.choices[0].message.content.strip()
     except Exception:
         return "Unknown"
