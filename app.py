@@ -10,30 +10,26 @@ from asset_classifier import classify_asset
 from vulnerability import fetch_nvd, fetch_epss, fetch_kev_status
 from chatbot import ask_ai
 
-# Load environment variables
 load_dotenv()
 utils.init_db()
 
 st.set_page_config(page_title="AI PCAP Analyzer - OT Asset Intelligence", layout="wide")
 st.title("🛡️ AI PCAP Analyzer with OT Asset Classification & Vulnerability Intelligence")
 
-# API keys
+# API keys – now Groq replaces Hugging Face
 nvd_api_key = st.secrets.get("NVD_API_KEY", os.getenv("NVD_API_KEY"))
-hf_token = st.secrets.get("HF_API_TOKEN", os.getenv("HF_API_TOKEN"))
+groq_api_key = st.secrets.get("GROQ_API_KEY", os.getenv("GROQ_API_KEY"))
 
-# Sidebar
 with st.sidebar:
     st.header("Configuration")
     if not nvd_api_key:
         st.warning("NVD API key not set. NVD queries may fail.")
-    if not hf_token:
-        st.info("Hugging Face token not set. AI classification and chatbot disabled.")
+    if not groq_api_key:
+        st.info("Groq API key not set. AI classification and chatbot disabled.")
     st.markdown("---")
-    st.markdown("**How to use**")
-    st.markdown("1. Upload a PCAP file.")
-    st.markdown("2. Wait for analysis – assets will be classified.")
-    st.markdown("3. Use the AI assistant to ask questions about the traffic, CVEs, or assets.")
-    st.markdown("**Supported OT protocols:** Modbus, S7, DNP3, BACnet, EtherNet/IP, IEC 104, OPC UA, CODESYS, Profinet, EtherCAT, MQTT, IEC 61850, and more.")
+    st.markdown("Upload a PCAP file to see asset classification and vulnerability data.")
+    st.markdown("**Supported OT protocols**: Modbus, S7, DNP3, BACnet, EtherNet/IP, IEC 104, OPC UA, CODESYS, Profinet, EtherCAT, MQTT, IEC 61850, and more.")
+    st.markdown("**AI Assistant**: Powered by Groq's fast inference (free tier).")
 
 # Session state
 if 'assets_df' not in st.session_state:
@@ -46,7 +42,6 @@ if 'analysis_complete' not in st.session_state:
 # File upload
 uploaded_file = st.file_uploader("Choose a PCAP file", type=["pcap", "pcapng"])
 if uploaded_file and not st.session_state.analysis_complete:
-    # Save uploaded file temporarily
     with tempfile.NamedTemporaryFile(delete=False, suffix=".pcap") as tmp:
         tmp.write(uploaded_file.getbuffer())
         tmp_path = tmp.name
@@ -57,11 +52,10 @@ if uploaded_file and not st.session_state.analysis_complete:
     with st.spinner("Classifying assets..."):
         classified = []
         for ip, data in ip_data.items():
-            asset = classify_asset(data, hf_token)
+            asset = classify_asset(data, groq_api_key)
             classified.append(asset)
 
     st.session_state.assets_df = pd.DataFrame(classified)
-    # Reorder columns for readability
     cols = ["ip", "asset_type", "confidence", "vendor", "ports", "hostnames", "ot_protocols", "http_user_agents", "dns_queries", "snmp_communities", "cves"]
     st.session_state.assets_df = st.session_state.assets_df[cols]
 
@@ -73,7 +67,6 @@ if uploaded_file and not st.session_state.analysis_complete:
 if st.session_state.analysis_complete:
     df_assets = st.session_state.assets_df
 
-    # OT Assets
     st.subheader("🏭 OT/ICS Assets")
     ot_mask = df_assets["ot_protocols"].apply(lambda x: len(x) > 0)
     ot_assets = df_assets[ot_mask]
@@ -82,7 +75,6 @@ if st.session_state.analysis_complete:
     else:
         st.info("No OT/ICS protocols detected.")
 
-    # All assets
     st.subheader("📡 All Detected Assets")
     st.dataframe(df_assets, use_container_width=True)
 
@@ -106,9 +98,9 @@ if st.session_state.analysis_complete:
             st.write(f"**EPSS Score:** {info['epss']}")
             st.write(f"**KEV (Known Exploited):** {'Yes' if info['kev'] else 'No'}")
 
-    # AI Chatbot
-    if hf_token:
-        st.subheader("🤖 AI Assistant")
+    # AI Chatbot (using Groq)
+    if groq_api_key:
+        st.subheader("🤖 AI Assistant (Powered by Groq)")
         st.markdown("Ask about the assets, vulnerabilities, or general questions related to the PCAP analysis.")
 
         # Build context for the AI
@@ -154,8 +146,8 @@ if st.session_state.analysis_complete:
                     if ip_context:
                         context += "\n\nSpecific asset details:\n" + "\n".join(ip_context)
 
-                answer = ask_ai(user_question, context, hf_token=hf_token)
+                answer = ask_ai(user_question, context, groq_api_key=groq_api_key)
                 st.markdown("**AI Response:**")
                 st.write(answer)
     else:
-        st.error("Hugging Face token not configured. Add HF_API_TOKEN to secrets to use the AI chatbot.")
+        st.error("Groq API key not configured. Add GROQ_API_KEY to secrets to use the AI chatbot.")
