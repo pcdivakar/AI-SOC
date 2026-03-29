@@ -3,7 +3,7 @@ from scapy.all import rdpcap, IP, TCP, UDP, Ether, Raw, ARP, DNS
 from collections import defaultdict
 from collections import Counter
 
-# OT Protocol Signatures (unchanged)
+# OT Protocol Signatures (port + payload start)
 OT_PROTOCOLS = {
     "Modbus": {"ports": [502], "signatures": [b'\x00\x00\x00\x00\x00\x06', b'\x00\x01\x00\x00\x00\x06'], "asset_type": "PLC/RTU", "vendor": None},
     "Siemens S7": {"ports": [102], "signatures": [b'\x03\x00\x00', b'\x32\x01\x00'], "asset_type": "Siemens PLC", "vendor": "Siemens"},
@@ -94,7 +94,6 @@ def detect_windows_version(payload):
     return None
 
 def guess_os_from_ttl(ttl):
-    """Guess OS based on typical initial TTL values."""
     if ttl <= 64:
         if ttl == 64:
             return "Linux/Unix (TTL=64)"
@@ -137,7 +136,7 @@ def analyze_pcap(pcap_path, max_packets=10000):
         "model_number": None
     })
 
-    # First pass: build IP-MAC mapping
+    # Build IP-MAC mapping
     ip_mac = {}
     for pkt in packets:
         if ARP in pkt and pkt[ARP].op == 2:
@@ -151,14 +150,12 @@ def analyze_pcap(pcap_path, max_packets=10000):
         src_ip = pkt[IP].src
         dst_ip = pkt[IP].dst
 
-        # Initialize entries
         for ip in [src_ip, dst_ip]:
             if ip_data[ip]["ip"] is None:
                 ip_data[ip]["ip"] = ip
             if ip in ip_mac:
                 ip_data[ip]["macs"].add(ip_mac[ip])
 
-        # Ports
         if TCP in pkt or UDP in pkt:
             sport = pkt.sport if hasattr(pkt, 'sport') else None
             dport = pkt.dport if hasattr(pkt, 'dport') else None
@@ -169,7 +166,6 @@ def analyze_pcap(pcap_path, max_packets=10000):
                 ip_data[src_ip]["ports"].add(dport)
                 ip_data[dst_ip]["ports"].add(dport)
 
-        # OT detection
         proto, asset_type, vendor = detect_ot_protocol(pkt)
         if proto:
             ip_data[dst_ip]["ot_protocols"].add(proto)
@@ -178,47 +174,38 @@ def analyze_pcap(pcap_path, max_packets=10000):
             if vendor:
                 ip_data[dst_ip]["ot_vendors"].add(vendor)
 
-        # TTL collection for OS guess
         ttl = pkt[IP].ttl
         ip_data[src_ip]["ttl_values"].append(ttl)
         ip_data[dst_ip]["ttl_values"].append(ttl)
 
-        # Payload-based extraction
         if Raw in pkt:
             payload = bytes(pkt[Raw].load)
-            # HTTP Host
             host_match = re.search(rb'Host:\s*([^\r\n]+)', payload, re.IGNORECASE)
             if host_match:
                 ip_data[dst_ip]["hostnames"].add(host_match.group(1).decode(errors='ignore'))
-            # HTTP User-Agent
             ua_match = re.search(rb'User-Agent:\s*([^\r\n]+)', payload, re.IGNORECASE)
             if ua_match:
                 ua = ua_match.group(1).decode(errors='ignore')
                 ip_data[src_ip]["http_user_agents"].add(ua)
-                # Try to guess OS from User-Agent
                 if 'Windows' in ua:
                     ip_data[src_ip]["os_from_ua"] = ua.split('Windows')[1].split(';')[0].strip()
                 elif 'Linux' in ua:
                     ip_data[src_ip]["os_from_ua"] = 'Linux'
                 elif 'Mac' in ua:
                     ip_data[src_ip]["os_from_ua"] = 'macOS'
-            # TLS SNI
             if TCP in pkt and pkt.dport == 443 and payload.startswith(b'\x16'):
                 sni_match = re.search(rb'\x00\x00\x00([^\x00]+)', payload)
                 if sni_match:
                     ip_data[dst_ip]["hostnames"].add(sni_match.group(1).decode(errors='ignore'))
-            # SNMP community
             if UDP in pkt and pkt.dport == 161 and payload.startswith(b'\x30'):
                 parts = payload.split(b'\x04')
                 if len(parts) >= 2:
                     community = parts[1].split(b'\x00')[0].decode(errors='ignore')
                     ip_data[dst_ip]["snmp_communities"].add(community)
-            # CVEs from payload
             payload_str = payload.decode(errors='ignore')
             cve_matches = re.findall(r'CVE-\d{4}-\d{4,7}', payload_str, re.IGNORECASE)
             for cve in cve_matches:
                 ip_data[dst_ip]["cves"].add(cve.upper())
-            # OT metadata
             if proto:
                 metadata = extract_ot_metadata(payload, proto)
                 if 'firmware_version' in metadata:
@@ -227,30 +214,24 @@ def analyze_pcap(pcap_path, max_packets=10000):
                     ip_data[dst_ip]["model_number"] = metadata['model_number']
                 if 'vendor' in metadata:
                     ip_data[dst_ip]["ot_vendors"].add(metadata['vendor'])
-            # SMB Windows version
             if 445 in [pkt.dport, pkt.sport] and payload.startswith(b'\xff\x53\x4d\x42'):
                 win_ver = detect_windows_version(payload)
                 if win_ver:
                     ip_data[dst_ip]["os_from_smb"] = win_ver
-                    # Also store as OS guess from SMB
                     ip_data[dst_ip]["os_from_ua"] = win_ver
 
-        # DNS queries
         if DNS in pkt and pkt[DNS].qr == 0:
             for q in pkt[DNS].qd:
                 if q.qname:
                     ip_data[src_ip]["dns_queries"].add(q.qname.decode(errors='ignore').rstrip('.'))
 
-    # After processing all packets, compute OS from TTL for each IP
     for ip, data in ip_data.items():
         if data["ttl_values"]:
-            # Use the most common TTL
             ttl_counts = Counter(data["ttl_values"])
             most_common_ttl = ttl_counts.most_common(1)[0][0]
             data["os_from_ttl"] = guess_os_from_ttl(most_common_ttl)
         else:
             data["os_from_ttl"] = "Unknown"
-        # Combine OS guesses: prefer SMB/UA over TTL
         if data["os_from_smb"]:
             data["os_combined"] = data["os_from_smb"]
         elif data["os_from_ua"]:
@@ -258,7 +239,6 @@ def analyze_pcap(pcap_path, max_packets=10000):
         else:
             data["os_combined"] = data["os_from_ttl"]
 
-    # Convert sets to lists
     for ip, data in ip_data.items():
         data["macs"] = list(data["macs"])
         data["ports"] = sorted(data["ports"])
@@ -270,7 +250,6 @@ def analyze_pcap(pcap_path, max_packets=10000):
         data["dns_queries"] = list(data["dns_queries"])
         data["snmp_communities"] = list(data["snmp_communities"])
         data["cves"] = list(data["cves"])
-        # Ensure these exist
         data.setdefault("firmware_version", None)
         data.setdefault("model_number", None)
         data.setdefault("os_combined", None)
