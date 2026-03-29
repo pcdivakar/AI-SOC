@@ -10,7 +10,7 @@ from pcap_analyzer import analyze_pcap
 from asset_classifier import classify_asset
 from vulnerability import fetch_nvd, fetch_epss, fetch_kev_status
 from vulnerability_enrichment import enrich_assets_with_vulnerabilities, fetch_cves_by_keyword
-from chatbot import ask_ai
+from ollama_chatbot import ask_ai
 from chart_generator import generate_chart
 
 load_dotenv()
@@ -87,9 +87,12 @@ st.markdown("""
 st.set_page_config(page_title="AI PCAP Analyzer - Deloitte OT Intelligence", layout="wide")
 st.title("🛡️ Deloitte OT Security Analyzer")
 
-# API keys
+# API keys (NVD, etc.)
 nvd_api_key = st.secrets.get("NVD_API_KEY", os.getenv("NVD_API_KEY"))
-groq_api_key = st.secrets.get("GROQ_API_KEY", os.getenv("GROQ_API_KEY"))
+
+# Ollama configuration
+ollama_url = st.sidebar.text_input("Ollama API URL", value=os.getenv("OLLAMA_URL", "http://localhost:11434"))
+ollama_model = st.sidebar.text_input("Ollama Model", value=os.getenv("OLLAMA_MODEL", "llama3.2"))
 
 # Logo URL (optional)
 logo_url = st.secrets.get("LOGO_URL", None)
@@ -111,7 +114,7 @@ with st.sidebar:
     st.markdown("---")
     st.markdown("Upload a PCAP file to classify OT assets and discover vulnerabilities.")
     st.markdown("**Supported OT protocols:** Modbus, S7, DNP3, BACnet, EtherNet/IP, IEC 104, OPC UA, CODESYS, Profinet, EtherCAT, MQTT, IEC 61850, and more.")
-    st.markdown("**AI Assistant:** Powered by Groq.")
+    st.markdown("**AI Assistant:** Powered by Ollama (local/self‑hosted).")
 
 # Session state
 if 'assets_df' not in st.session_state:
@@ -126,8 +129,10 @@ if 'dashboard_definition' not in st.session_state:
     st.session_state.dashboard_definition = None
 if 'protocol_counts' not in st.session_state:
     st.session_state.protocol_counts = {}
+if 'ics_advisory_df' not in st.session_state:
+    st.session_state.ics_advisory_df = None
 
-# ------------------ Helper functions ------------------
+# ------------------ Helper functions (unchanged) ------------------
 def prepare_chart_data(df, *cols):
     data = df.copy()
     for col in cols:
@@ -371,7 +376,6 @@ def render_chart(spec, df, protocol_counts=None):
 # ------------------ Main app flow ------------------
 uploaded_file = st.file_uploader("Choose a PCAP file", type=["pcap", "pcapng"])
 if uploaded_file and not st.session_state.analysis_complete:
-    # File size check
     file_size_mb = uploaded_file.size / (1024 * 1024)
     if file_size_mb > 200:
         st.warning(f"File size is {file_size_mb:.1f} MB. Processing will be limited to {max_packets} packets. For full analysis, consider reducing packet limit or using a smaller PCAP.")
@@ -389,8 +393,7 @@ if uploaded_file and not st.session_state.analysis_complete:
     with st.spinner("Classifying assets..."):
         classified = []
         for ip, data in ip_data.items():
-            classified.append(classify_asset(data, groq_api_key))
-
+            classified.append(classify_asset(data, None))  # No AI for asset classification now
     st.session_state.assets_df = pd.DataFrame(classified)
     cols = [
         "ip", "asset_type", "confidence", "vendor", "ports", "hostnames",
@@ -399,7 +402,6 @@ if uploaded_file and not st.session_state.analysis_complete:
     ]
     st.session_state.assets_df = st.session_state.assets_df[cols]
 
-    # Compute protocol counts from the original IP data (for charting)
     protocol_counts = {}
     for ip, data in ip_data.items():
         for proto in data["ot_protocols"]:
@@ -435,7 +437,7 @@ if st.session_state.analysis_complete:
         st.dataframe(df_assets, use_container_width=True)
 
     with tab_vuln:
-        # Embed the CVE dashboard (with dark green theme)
+        # 1) Interactive CVE Dashboard (HTML)
         html_path = os.path.join(os.path.dirname(__file__), "cve_dashboard.html")
         if os.path.exists(html_path):
             with open(html_path, "r", encoding="utf-8") as f:
@@ -446,151 +448,189 @@ if st.session_state.analysis_complete:
         else:
             st.warning("Dashboard HTML file not found. Please add 'cve_dashboard.html' to the app directory.")
 
-    # AI Assistant (chat interface)
-    if groq_api_key:
+        # 2) ICS Advisory Upload and Search
         st.markdown("---")
-        st.subheader("🤖 AI Assistant (Powered by Groq)")
-        st.markdown("Ask about the assets, vulnerabilities, or request a single chart or a full dashboard.")
-
-        # Build rich context
-        asset_summary = []
-        for _, row in df_assets.iterrows():
-            vuln_text = ""
-            if "vulnerabilities" in row and row["vulnerabilities"]:
-                vuln_text = " ; Vulnerabilities: " + ", ".join([f"{v['cve_id']} (EPSS={v['epss']}, KEV={v['kev']})" for v in row["vulnerabilities"]])
-            asset_summary.append(
-                f"- {row['ip']}: {row['asset_type']} (ports: {', '.join(map(str, row['ports']))}, "
-                f"vendor: {row['vendor']}, OS: {row['os']}, firmware: {row['firmware_version']}, model: {row['model_number']}){vuln_text}"
-            )
-        context = "PCAP Analysis Results:\n" + "\n".join(asset_summary)
-
-        # Add protocol distribution
-        if st.session_state.protocol_counts:
-            proto_text = "\n\nProtocol Distribution (packet count per detected OT protocol):\n"
-            for proto, count in st.session_state.protocol_counts.items():
-                proto_text += f"- {proto}: {count} packets\n"
-            context += proto_text
-
-        # Add manually fetched CVE details
-        if st.session_state.cve_data:
-            context += "\n\nManually fetched CVE details:\n"
-            for cve, info in st.session_state.cve_data.items():
-                context += f"- {cve}: EPSS={info['epss']}, KEV={info['kev']}, Desc={info['description'][:100]}...\n"
-
-        if st.session_state.keyword_cves:
-            context += "\n\nKeyword Search Results (from NVD):\n"
-            for keyword, cves in st.session_state.keyword_cves.items():
-                context += f"\n**Keyword: {keyword}**\n"
-                for cve in cves[:10]:
-                    context += f"- {cve['cve_id']}: EPSS={cve['epss']}, KEV={cve['kev']}, Desc={cve['description'][:100]}...\n"
-
-        user_question = st.text_area("Ask a question, request a chart, or ask for a dashboard (e.g., 'Show me protocol distribution')")
-        if st.button("Ask AI") and user_question:
-            with st.spinner("Thinking..."):
-                # Auto‑fetch CVEs mentioned in the question
-                cve_matches = re.findall(r'CVE-\d{4}-\d{4,7}', user_question, re.IGNORECASE)
-                if cve_matches and nvd_api_key:
-                    for cve in cve_matches:
-                        if cve not in st.session_state.cve_data:
-                            cve_data = fetch_nvd(cve, nvd_api_key)
-                            epss = fetch_epss(cve)
-                            kev = fetch_kev_status(cve)
-                            st.session_state.cve_data[cve] = {
-                                "description": cve_data.get("descriptions", [{}])[0].get("value", "N/A") if cve_data else "N/A",
-                                "epss": epss if epss is not None else "N/A",
-                                "kev": kev
-                            }
-                    for cve in cve_matches:
-                        info = st.session_state.cve_data[cve]
-                        context += f"\n- {cve}: EPSS={info['epss']}, KEV={info['kev']}, Desc={info['description'][:100]}..."
-
-                ip_matches = re.findall(r'\b(?:\d{1,3}\.){3}\d{1,3}\b', user_question)
-                if ip_matches:
-                    ip_context = []
-                    for ip in ip_matches:
-                        asset_row = df_assets[df_assets['ip'] == ip]
-                        if not asset_row.empty:
-                            ip_context.append(f"- {ip}: {asset_row.iloc[0]['asset_type']} (ports: {asset_row.iloc[0]['ports']})")
-                    if ip_context:
-                        context += "\n\nSpecific asset details:\n" + "\n".join(ip_context)
-
-                answer = ask_ai(user_question, context, groq_api_key=groq_api_key)
-
-                with st.expander("Debug: Raw AI response"):
-                    st.code(answer)
-
-                # Check for DASHBOARD command
-                if answer.strip().upper().startswith("DASHBOARD:"):
-                    parts = answer.split('|', 1)
-                    if len(parts) >= 2:
-                        title = parts[0].replace("DASHBOARD:", "").strip()
-                        charts_str = parts[1]
-                        chart_specs = [spec.strip() for spec in charts_str.split(';') if spec.strip()]
-                        dashboard_charts = []
-                        for spec in chart_specs:
-                            parsed = parse_chart_spec(spec)
-                            if parsed:
-                                dashboard_charts.append(parsed)
-                        st.session_state.dashboard_definition = {
-                            'title': title,
-                            'charts': dashboard_charts
-                        }
-                        st.success(f"Dashboard '{title}' created! It will appear below.")
-                    else:
-                        st.write(answer)
+        st.subheader("📄 ICS‑CERT Advisory Upload")
+        ics_file = st.file_uploader("Upload ICS Advisory Excel/CSV file", type=["csv", "xlsx"])
+        if ics_file:
+            try:
+                if ics_file.name.endswith('.csv'):
+                    df_ics = pd.read_csv(ics_file)
                 else:
-                    # Check for single CHART command
-                    chart_line = None
-                    for line in answer.split('\n'):
-                        if line.strip().upper().startswith('CHART:'):
-                            chart_line = line.strip()
-                            break
-                    if chart_line:
-                        spec_str = chart_line[6:].strip()
-                        chart_spec = parse_chart_spec(spec_str)
-                        if chart_spec:
-                            fig = render_chart(chart_spec, df_assets, st.session_state.protocol_counts)
-                            if fig:
-                                st.plotly_chart(fig, use_container_width=True)
-                            else:
-                                st.write("Could not generate chart.")
-                        else:
-                            st.write(answer)
-                    else:
-                        st.markdown("**AI Response:**")
-                        st.write(answer)
+                    df_ics = pd.read_excel(ics_file, engine='openpyxl')
+                # Store in session state
+                st.session_state.ics_advisory_df = df_ics
+                st.success(f"Loaded {len(df_ics)} advisories.")
+            except Exception as e:
+                st.error(f"Failed to parse file: {e}")
 
-        # Display the dashboard if it exists (after AI)
-        if st.session_state.dashboard_definition:
-            st.markdown("---")
-            dash = st.session_state.dashboard_definition
-            if not logo_url:
-                st.header(f"📊 {dash['title']} Dashboard")
+        if st.session_state.ics_advisory_df is not None:
+            df_ics = st.session_state.ics_advisory_df
+            st.subheader("🔍 Search ICS Advisories")
+            search_term = st.text_input("Search by CVE, Vendor, Product, or Title")
+            if search_term:
+                mask = df_ics.apply(lambda row: row.astype(str).str.contains(search_term, case=False).any(), axis=1)
+                filtered = df_ics[mask]
+                st.dataframe(filtered, use_container_width=True)
             else:
-                st.markdown("### Dashboard")
-            if logo_url:
-                st.image(logo_url, width=200)
+                st.dataframe(df_ics, use_container_width=True)
 
-            if st.button("🗑️ Clear Dashboard"):
-                st.session_state.dashboard_definition = None
-                st.rerun()
+    # AI Assistant (using Ollama)
+    st.markdown("---")
+    st.subheader("🤖 AI Assistant (Powered by Ollama)")
+    st.markdown("Ask about the assets, vulnerabilities, or request a chart or dashboard.")
 
-            if not dash['charts']:
-                st.warning("Dashboard definition contains no charts.")
-                with st.expander("Raw definition"):
-                    st.code(dash, language='json')
+    # Build context (same as before)
+    asset_summary = []
+    for _, row in df_assets.iterrows():
+        vuln_text = ""
+        if "vulnerabilities" in row and row["vulnerabilities"]:
+            vuln_text = " ; Vulnerabilities: " + ", ".join([f"{v['cve_id']} (EPSS={v['epss']}, KEV={v['kev']})" for v in row["vulnerabilities"]])
+        asset_summary.append(
+            f"- {row['ip']}: {row['asset_type']} (ports: {', '.join(map(str, row['ports']))}, "
+            f"vendor: {row['vendor']}, OS: {row['os']}, firmware: {row['firmware_version']}, model: {row['model_number']}){vuln_text}"
+        )
+    context = "PCAP Analysis Results:\n" + "\n".join(asset_summary)
+
+    if st.session_state.protocol_counts:
+        proto_text = "\n\nProtocol Distribution (packet count per detected OT protocol):\n"
+        for proto, count in st.session_state.protocol_counts.items():
+            proto_text += f"- {proto}: {count} packets\n"
+        context += proto_text
+
+    if st.session_state.cve_data:
+        context += "\n\nManually fetched CVE details:\n"
+        for cve, info in st.session_state.cve_data.items():
+            context += f"- {cve}: EPSS={info['epss']}, KEV={info['kev']}, Desc={info['description'][:100]}...\n"
+
+    if st.session_state.keyword_cves:
+        context += "\n\nKeyword Search Results (from NVD):\n"
+        for keyword, cves in st.session_state.keyword_cves.items():
+            context += f"\n**Keyword: {keyword}**\n"
+            for cve in cves[:10]:
+                context += f"- {cve['cve_id']}: EPSS={cve['epss']}, KEV={cve['kev']}, Desc={cve['description'][:100]}...\n"
+
+    # Add ICS advisory data to context if present
+    if st.session_state.ics_advisory_df is not None:
+        ics_df = st.session_state.ics_advisory_df
+        if not ics_df.empty:
+            # Limit to first 20 to avoid huge context
+            ics_sample = ics_df.head(20)
+            ics_text = "\n\nICS‑CERT Advisories (first 20):\n"
+            for _, row in ics_sample.iterrows():
+                cve = row.get('CVE_Number', '')
+                title = row.get('ICS-CERT_Advisory_Title', '')
+                vendor = row.get('Vendor', '')
+                product = row.get('Product', '')
+                severity = row.get('CVSS_Severity', '')
+                ics_text += f"- {cve}: {title} (Vendor: {vendor}, Product: {product}, Severity: {severity})\n"
+            context += ics_text
+
+    user_question = st.text_area("Ask a question, request a chart, or ask for a dashboard (e.g., 'Show me protocol distribution')")
+    if st.button("Ask AI") and user_question:
+        with st.spinner("Thinking..."):
+            # Auto‑fetch CVEs mentioned in the question
+            cve_matches = re.findall(r'CVE-\d{4}-\d{4,7}', user_question, re.IGNORECASE)
+            if cve_matches and nvd_api_key:
+                for cve in cve_matches:
+                    if cve not in st.session_state.cve_data:
+                        cve_data = fetch_nvd(cve, nvd_api_key)
+                        epss = fetch_epss(cve)
+                        kev = fetch_kev_status(cve)
+                        st.session_state.cve_data[cve] = {
+                            "description": cve_data.get("descriptions", [{}])[0].get("value", "N/A") if cve_data else "N/A",
+                            "epss": epss if epss is not None else "N/A",
+                            "kev": kev
+                        }
+                for cve in cve_matches:
+                    info = st.session_state.cve_data[cve]
+                    context += f"\n- {cve}: EPSS={info['epss']}, KEV={info['kev']}, Desc={info['description'][:100]}..."
+
+            ip_matches = re.findall(r'\b(?:\d{1,3}\.){3}\d{1,3}\b', user_question)
+            if ip_matches:
+                ip_context = []
+                for ip in ip_matches:
+                    asset_row = df_assets[df_assets['ip'] == ip]
+                    if not asset_row.empty:
+                        ip_context.append(f"- {ip}: {asset_row.iloc[0]['asset_type']} (ports: {asset_row.iloc[0]['ports']})")
+                if ip_context:
+                    context += "\n\nSpecific asset details:\n" + "\n".join(ip_context)
+
+            answer = ask_ai(user_question, context, model=ollama_model, ollama_url=ollama_url)
+
+            with st.expander("Debug: Raw AI response"):
+                st.code(answer)
+
+            # Check for DASHBOARD command
+            if answer.strip().upper().startswith("DASHBOARD:"):
+                parts = answer.split('|', 1)
+                if len(parts) >= 2:
+                    title = parts[0].replace("DASHBOARD:", "").strip()
+                    charts_str = parts[1]
+                    chart_specs = [spec.strip() for spec in charts_str.split(';') if spec.strip()]
+                    dashboard_charts = []
+                    for spec in chart_specs:
+                        parsed = parse_chart_spec(spec)
+                        if parsed:
+                            dashboard_charts.append(parsed)
+                    st.session_state.dashboard_definition = {
+                        'title': title,
+                        'charts': dashboard_charts
+                    }
+                    st.success(f"Dashboard '{title}' created! It will appear below.")
+                else:
+                    st.write(answer)
             else:
-                cols = st.columns(2)
-                rendered_count = 0
-                for i, chart_spec in enumerate(dash['charts']):
-                    with cols[i % 2]:
+                # Check for single CHART command
+                chart_line = None
+                for line in answer.split('\n'):
+                    if line.strip().upper().startswith('CHART:'):
+                        chart_line = line.strip()
+                        break
+                if chart_line:
+                    spec_str = chart_line[6:].strip()
+                    chart_spec = parse_chart_spec(spec_str)
+                    if chart_spec:
                         fig = render_chart(chart_spec, df_assets, st.session_state.protocol_counts)
                         if fig:
                             st.plotly_chart(fig, use_container_width=True)
-                            rendered_count += 1
                         else:
-                            st.warning(f"Could not render chart: {chart_spec}")
-                if rendered_count == 0:
-                    st.error("No charts could be rendered. Please request a new dashboard with columns that exist in the asset data (e.g., 'asset_type', 'vendor', 'os').")
-    else:
-        st.error("Groq API key not configured. Add GROQ_API_KEY to secrets to use the AI assistant.")
+                            st.write("Could not generate chart.")
+                    else:
+                        st.write(answer)
+                else:
+                    st.markdown("**AI Response:**")
+                    st.write(answer)
+
+    # Display the dashboard if it exists (after AI)
+    if st.session_state.dashboard_definition:
+        st.markdown("---")
+        dash = st.session_state.dashboard_definition
+        if not logo_url:
+            st.header(f"📊 {dash['title']} Dashboard")
+        else:
+            st.markdown("### Dashboard")
+        if logo_url:
+            st.image(logo_url, width=200)
+
+        if st.button("🗑️ Clear Dashboard"):
+            st.session_state.dashboard_definition = None
+            st.rerun()
+
+        if not dash['charts']:
+            st.warning("Dashboard definition contains no charts.")
+            with st.expander("Raw definition"):
+                st.code(dash, language='json')
+        else:
+            cols = st.columns(2)
+            rendered_count = 0
+            for i, chart_spec in enumerate(dash['charts']):
+                with cols[i % 2]:
+                    fig = render_chart(chart_spec, df_assets, st.session_state.protocol_counts)
+                    if fig:
+                        st.plotly_chart(fig, use_container_width=True)
+                        rendered_count += 1
+                    else:
+                        st.warning(f"Could not render chart: {chart_spec}")
+            if rendered_count == 0:
+                st.error("No charts could be rendered. Please request a new dashboard with columns that exist in the asset data (e.g., 'asset_type', 'vendor', 'os').")
