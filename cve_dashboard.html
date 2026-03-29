@@ -4,486 +4,101 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Enterprise CVE Risk Dashboard | NIST NVD</title>
-    <!-- Chart.js for severity distribution -->
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
-    <!-- SheetJS for Excel/CSV parsing -->
     <script src="https://cdn.sheetjs.com/xlsx-0.20.2/package/dist/xlsx.full.min.js"></script>
-    <!-- Font Awesome for icons -->
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
     <style>
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-        }
-
-        body {
-            background: #f0f2f5;
-            color: #1e293b;
-            line-height: 1.5;
-        }
-
-        .dashboard {
-            max-width: 1600px;
-            margin: 0 auto;
-            padding: 2rem;
-        }
-
-        /* Header */
-        .header {
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            margin-bottom: 2rem;
-        }
-
-        .logo h1 {
-            font-size: 1.8rem;
-            font-weight: 600;
-            background: linear-gradient(135deg, #2563eb, #1e40af);
-            -webkit-background-clip: text;
-            -webkit-text-fill-color: transparent;
-            background-clip: text;
-        }
-
-        .badge {
-            background: #dbeafe;
-            color: #1e40af;
-            padding: 0.5rem 1rem;
-            border-radius: 100px;
-            font-size: 0.9rem;
-            font-weight: 500;
-            display: flex;
-            align-items: center;
-            gap: 0.5rem;
-        }
-
-        /* Cards */
-        .stats-grid {
-            display: grid;
-            grid-template-columns: repeat(4, 1fr);
-            gap: 1.5rem;
-            margin-bottom: 2rem;
-        }
-
-        .stat-card {
-            background: white;
-            padding: 1.5rem;
-            border-radius: 1rem;
-            box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1);
-            display: flex;
-            align-items: center;
-            gap: 1rem;
-        }
-
-        .stat-icon {
-            width: 48px;
-            height: 48px;
-            background: #eef2ff;
-            border-radius: 12px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            color: #2563eb;
-            font-size: 1.5rem;
-        }
-
-        .stat-content h3 {
-            font-size: 0.9rem;
-            font-weight: 500;
-            color: #64748b;
-            text-transform: uppercase;
-            letter-spacing: 0.05em;
-        }
-
-        .stat-content .value {
-            font-size: 2rem;
-            font-weight: 700;
-            color: #0f172a;
-            line-height: 1.2;
-        }
-
-        /* Input panel */
-        .input-panel {
-            background: white;
-            border-radius: 1rem;
-            padding: 2rem;
-            box-shadow: 0 10px 15px -3px rgb(0 0 0 / 0.1);
-            margin-bottom: 2rem;
-        }
-
-        .panel-title {
-            font-size: 1.2rem;
-            font-weight: 600;
-            margin-bottom: 1.5rem;
-            display: flex;
-            align-items: center;
-            gap: 0.5rem;
-        }
-
-        .input-methods {
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 2rem;
-        }
-
-        .method {
-            border: 1px solid #e2e8f0;
-            border-radius: 0.75rem;
-            padding: 1.5rem;
-        }
-
-        .method h3 {
-            font-size: 1rem;
-            font-weight: 600;
-            margin-bottom: 1rem;
-            color: #334155;
-        }
-
-        .method textarea {
-            width: 100%;
-            height: 120px;
-            padding: 0.75rem;
-            border: 1px solid #cbd5e1;
-            border-radius: 0.5rem;
-            font-family: inherit;
-            resize: vertical;
-            margin-bottom: 1rem;
-        }
-
-        .method textarea:focus {
-            outline: none;
-            border-color: #2563eb;
-            ring: 2px solid #bfdbfe;
-        }
-
-        .file-upload {
-            display: flex;
-            flex-direction: column;
-            gap: 1rem;
-        }
-
-        .file-upload label {
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            gap: 0.5rem;
-            padding: 0.75rem;
-            background: #f8fafc;
-            border: 2px dashed #cbd5e1;
-            border-radius: 0.5rem;
-            cursor: pointer;
-            transition: all 0.2s;
-        }
-
-        .file-upload label:hover {
-            border-color: #2563eb;
-            background: #eff6ff;
-        }
-
-        .file-upload input {
-            display: none;
-        }
-
-        .api-key-row {
-            display: flex;
-            align-items: center;
-            gap: 1rem;
-            margin: 1.5rem 0 1rem;
-        }
-
-        .api-key-row input {
-            flex: 1;
-            padding: 0.75rem 1rem;
-            border: 1px solid #cbd5e1;
-            border-radius: 0.5rem;
-            font-family: inherit;
-        }
-
-        .btn-primary {
-            background: #2563eb;
-            color: white;
-            border: none;
-            padding: 0.75rem 2rem;
-            border-radius: 0.5rem;
-            font-weight: 600;
-            cursor: pointer;
-            transition: background 0.2s;
-            display: inline-flex;
-            align-items: center;
-            gap: 0.5rem;
-        }
-
-        .btn-primary:hover {
-            background: #1d4ed8;
-        }
-
-        .btn-primary:disabled {
-            opacity: 0.5;
-            cursor: not-allowed;
-        }
-
-        /* Chart container */
-        .chart-container {
-            background: white;
-            border-radius: 1rem;
-            padding: 1.5rem;
-            margin-bottom: 2rem;
-            box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1);
-            display: flex;
-            align-items: center;
-            gap: 2rem;
-        }
-
-        .chart-box {
-            width: 200px;
-            height: 200px;
-            position: relative;
-        }
-
-        .severity-legend {
-            flex: 1;
-            display: flex;
-            flex-direction: column;
-            gap: 0.75rem;
-        }
-
-        .legend-item {
-            display: flex;
-            align-items: center;
-            gap: 0.5rem;
-            font-size: 0.95rem;
-        }
-
-        .color-dot {
-            width: 12px;
-            height: 12px;
-            border-radius: 50%;
-        }
-
-        /* Table */
-        .table-container {
-            background: white;
-            border-radius: 1rem;
-            padding: 1.5rem;
-            box-shadow: 0 10px 15px -3px rgb(0 0 0 / 0.1);
-            overflow-x: auto;
-        }
-
-        .table-header {
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            margin-bottom: 1.5rem;
-        }
-
-        .table-header h2 {
-            font-size: 1.2rem;
-            font-weight: 600;
-        }
-
-        .sort-info {
-            font-size: 0.8rem;
-            color: #64748b;
-            background: #f1f5f9;
-            padding: 0.25rem 0.75rem;
-            border-radius: 1rem;
-        }
-
-        .search-box {
-            display: flex;
-            align-items: center;
-            gap: 0.5rem;
-            border: 1px solid #e2e8f0;
-            border-radius: 0.5rem;
-            padding: 0.5rem 1rem;
-        }
-
-        .search-box i {
-            color: #94a3b8;
-        }
-
-        .search-box input {
-            border: none;
-            outline: none;
-            background: transparent;
-        }
-
-        table {
-            width: 100%;
-            border-collapse: collapse;
-        }
-
-        th {
-            text-align: left;
-            padding: 1rem 0.5rem;
-            color: #64748b;
-            font-weight: 600;
-            font-size: 0.85rem;
-            text-transform: uppercase;
-            letter-spacing: 0.05em;
-            border-bottom: 2px solid #e2e8f0;
-        }
-
-        td {
-            padding: 1rem 0.5rem;
-            border-bottom: 1px solid #f1f5f9;
-            vertical-align: top;
-        }
-
-        .asset-tag {
-            background: #f1f5f9;
-            padding: 0.25rem 0.75rem;
-            border-radius: 100px;
-            font-size: 0.85rem;
-            font-weight: 500;
-            display: inline-block;
-        }
-
-        .cve-id {
-            font-weight: 600;
-            color: #2563eb;
-            text-decoration: none;
-        }
-
-        .cve-id:hover {
-            text-decoration: underline;
-        }
-
-        .severity-badge {
-            padding: 0.25rem 0.75rem;
-            border-radius: 100px;
-            font-size: 0.85rem;
-            font-weight: 600;
-            display: inline-block;
-        }
-
+        * { margin: 0; padding: 0; box-sizing: border-box; font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }
+        body { background: #f0f2f5; color: #1e293b; line-height: 1.5; }
+        .dashboard { max-width: 1600px; margin: 0 auto; padding: 2rem; }
+        .header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 2rem; }
+        .logo h1 { font-size: 1.8rem; font-weight: 600; background: linear-gradient(135deg, #2563eb, #1e40af); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text; }
+        .badge { background: #dbeafe; color: #1e40af; padding: 0.5rem 1rem; border-radius: 100px; font-size: 0.9rem; font-weight: 500; display: flex; align-items: center; gap: 0.5rem; }
+        .stats-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 1.5rem; margin-bottom: 2rem; }
+        .stat-card { background: white; padding: 1.5rem; border-radius: 1rem; box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1); display: flex; align-items: center; gap: 1rem; }
+        .stat-icon { width: 48px; height: 48px; background: #eef2ff; border-radius: 12px; display: flex; align-items: center; justify-content: center; color: #2563eb; font-size: 1.5rem; }
+        .stat-content h3 { font-size: 0.9rem; font-weight: 500; color: #64748b; text-transform: uppercase; letter-spacing: 0.05em; }
+        .stat-content .value { font-size: 2rem; font-weight: 700; color: #0f172a; line-height: 1.2; }
+        .input-panel { background: white; border-radius: 1rem; padding: 2rem; box-shadow: 0 10px 15px -3px rgb(0 0 0 / 0.1); margin-bottom: 2rem; }
+        .panel-title { font-size: 1.2rem; font-weight: 600; margin-bottom: 1.5rem; display: flex; align-items: center; gap: 0.5rem; }
+        .input-methods { display: grid; grid-template-columns: 1fr 1fr; gap: 2rem; }
+        .method { border: 1px solid #e2e8f0; border-radius: 0.75rem; padding: 1.5rem; }
+        .method h3 { font-size: 1rem; font-weight: 600; margin-bottom: 1rem; color: #334155; }
+        .method textarea { width: 100%; height: 120px; padding: 0.75rem; border: 1px solid #cbd5e1; border-radius: 0.5rem; font-family: inherit; resize: vertical; margin-bottom: 1rem; }
+        .method textarea:focus { outline: none; border-color: #2563eb; ring: 2px solid #bfdbfe; }
+        .file-upload { display: flex; flex-direction: column; gap: 1rem; }
+        .file-upload label { display: flex; align-items: center; justify-content: center; gap: 0.5rem; padding: 0.75rem; background: #f8fafc; border: 2px dashed #cbd5e1; border-radius: 0.5rem; cursor: pointer; transition: all 0.2s; }
+        .file-upload label:hover { border-color: #2563eb; background: #eff6ff; }
+        .file-upload input { display: none; }
+        .api-key-row { display: flex; align-items: center; gap: 1rem; margin: 1.5rem 0 1rem; }
+        .api-key-row input { flex: 1; padding: 0.75rem 1rem; border: 1px solid #cbd5e1; border-radius: 0.5rem; font-family: inherit; }
+        .btn-primary { background: #2563eb; color: white; border: none; padding: 0.75rem 2rem; border-radius: 0.5rem; font-weight: 600; cursor: pointer; transition: background 0.2s; display: inline-flex; align-items: center; gap: 0.5rem; }
+        .btn-primary:hover { background: #1d4ed8; }
+        .btn-primary:disabled { opacity: 0.5; cursor: not-allowed; }
+        .chart-container { background: white; border-radius: 1rem; padding: 1.5rem; margin-bottom: 2rem; box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1); display: flex; align-items: center; gap: 2rem; }
+        .chart-box { width: 200px; height: 200px; position: relative; }
+        .severity-legend { flex: 1; display: flex; flex-direction: column; gap: 0.75rem; }
+        .legend-item { display: flex; align-items: center; gap: 0.5rem; font-size: 0.95rem; }
+        .color-dot { width: 12px; height: 12px; border-radius: 50%; }
+        .table-container { background: white; border-radius: 1rem; padding: 1.5rem; box-shadow: 0 10px 15px -3px rgb(0 0 0 / 0.1); overflow-x: auto; }
+        .table-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 1.5rem; }
+        .table-header h2 { font-size: 1.2rem; font-weight: 600; }
+        .sort-info { font-size: 0.8rem; color: #64748b; background: #f1f5f9; padding: 0.25rem 0.75rem; border-radius: 1rem; }
+        .search-box { display: flex; align-items: center; gap: 0.5rem; border: 1px solid #e2e8f0; border-radius: 0.5rem; padding: 0.5rem 1rem; }
+        .search-box i { color: #94a3b8; }
+        .search-box input { border: none; outline: none; background: transparent; }
+        table { width: 100%; border-collapse: collapse; }
+        th { text-align: left; padding: 1rem 0.5rem; color: #64748b; font-weight: 600; font-size: 0.85rem; text-transform: uppercase; letter-spacing: 0.05em; border-bottom: 2px solid #e2e8f0; }
+        td { padding: 1rem 0.5rem; border-bottom: 1px solid #f1f5f9; vertical-align: top; }
+        .asset-tag { background: #f1f5f9; padding: 0.25rem 0.75rem; border-radius: 100px; font-size: 0.85rem; font-weight: 500; display: inline-block; }
+        .cve-id { font-weight: 600; color: #2563eb; text-decoration: none; }
+        .cve-id:hover { text-decoration: underline; }
+        .severity-badge { padding: 0.25rem 0.75rem; border-radius: 100px; font-size: 0.85rem; font-weight: 600; display: inline-block; }
         .severity-critical { background: #7f1d1d; color: #fee2e2; }
         .severity-high { background: #991b1b; color: #fee2e2; }
         .severity-medium { background: #b45309; color: #fffbeb; }
         .severity-low { background: #065f46; color: #d1fae5; }
-
-        .vuln-desc {
-            max-width: 300px;
-            max-height: 60px;
-            overflow-y: auto;
-            font-size: 0.9rem;
-            color: #334155;
-        }
-
-        .mitigation-link {
-            color: #2563eb;
-            text-decoration: none;
-            font-size: 0.9rem;
-            display: inline-flex;
-            align-items: center;
-            gap: 0.25rem;
-        }
-
-        .mitigation-link:hover {
-            text-decoration: underline;
-        }
-
-        .loading-overlay {
-            display: none;
-            position: fixed;
-            top: 0; left: 0; width: 100%; height: 100%;
-            background: rgba(255,255,255,0.8);
-            backdrop-filter: blur(2px);
-            z-index: 1000;
-            justify-content: center;
-            align-items: center;
-            flex-direction: column;
-            gap: 1rem;
-        }
-
-        .loading-spinner {
-            border: 4px solid #f3f3f3;
-            border-top: 4px solid #2563eb;
-            border-radius: 50%;
-            width: 50px;
-            height: 50px;
-            animation: spin 1s linear infinite;
-        }
-
-        @keyframes spin {
-            0% { transform: rotate(0deg); }
-            100% { transform: rotate(360deg); }
-        }
-
-        .error-message {
-            background: #fee2e2;
-            color: #991b1b;
-            padding: 1rem;
-            border-radius: 0.5rem;
-            margin-bottom: 1rem;
-        }
+        .vuln-desc { max-width: 300px; max-height: 60px; overflow-y: auto; font-size: 0.9rem; color: #334155; }
+        .mitigation-link { color: #2563eb; text-decoration: none; font-size: 0.9rem; display: inline-flex; align-items: center; gap: 0.25rem; }
+        .mitigation-link:hover { text-decoration: underline; }
+        .loading-overlay { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(255,255,255,0.8); backdrop-filter: blur(2px); z-index: 1000; justify-content: center; align-items: center; flex-direction: column; gap: 1rem; }
+        .loading-spinner { border: 4px solid #f3f3f3; border-top: 4px solid #2563eb; border-radius: 50%; width: 50px; height: 50px; animation: spin 1s linear infinite; }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+        .error-message { background: #fee2e2; color: #991b1b; padding: 1rem; border-radius: 0.5rem; margin-bottom: 1rem; }
+        .summary-message { background: #e6f0ff; color: #1e40af; padding: 0.75rem 1rem; border-radius: 0.5rem; margin-bottom: 1rem; font-size: 0.9rem; display: flex; align-items: center; gap: 0.5rem; }
+        .btn-secondary { background: #f1f5f9; color: #1e293b; border: 1px solid #cbd5e1; padding: 0.5rem 1rem; border-radius: 0.5rem; font-size: 0.85rem; cursor: pointer; margin-top: 0.5rem; }
+        .btn-secondary:hover { background: #e2e8f0; }
     </style>
 </head>
 <body>
     <div class="dashboard">
-        <!-- Header -->
         <div class="header">
-            <div class="logo">
-                <h1><i class="fas fa-shield-halved" style="margin-right: 0.5rem;"></i>VulnRisk Dashboard</h1>
-            </div>
-            <div class="badge">
-                <i class="fas fa-database"></i> NIST NVD v2.0
-            </div>
+            <div class="logo"><h1><i class="fas fa-shield-halved"></i> VulnRisk Dashboard</h1></div>
+            <div class="badge"><i class="fas fa-database"></i> NIST NVD v2.0</div>
         </div>
 
-        <!-- Stats cards (populated dynamically) -->
         <div class="stats-grid" id="statsGrid">
-            <div class="stat-card">
-                <div class="stat-icon"><i class="fas fa-bug"></i></div>
-                <div class="stat-content">
-                    <h3>Total CVEs</h3>
-                    <div class="value" id="totalCves">0</div>
-                </div>
-            </div>
-            <div class="stat-card">
-                <div class="stat-icon"><i class="fas fa-exclamation-triangle"></i></div>
-                <div class="stat-content">
-                    <h3>Critical</h3>
-                    <div class="value" id="criticalCount">0</div>
-                </div>
-            </div>
-            <div class="stat-card">
-                <div class="stat-icon"><i class="fas fa-chart-line"></i></div>
-                <div class="stat-content">
-                    <h3>High</h3>
-                    <div class="value" id="highCount">0</div>
-                </div>
-            </div>
-            <div class="stat-card">
-                <div class="stat-icon"><i class="fas fa-shield"></i></div>
-                <div class="stat-content">
-                    <h3>Assets Scanned</h3>
-                    <div class="value" id="assetCount">0</div>
-                </div>
-            </div>
+            <div class="stat-card"><div class="stat-icon"><i class="fas fa-bug"></i></div><div class="stat-content"><h3>Total CVEs</h3><div class="value" id="totalCves">0</div></div></div>
+            <div class="stat-card"><div class="stat-icon"><i class="fas fa-exclamation-triangle"></i></div><div class="stat-content"><h3>Critical</h3><div class="value" id="criticalCount">0</div></div></div>
+            <div class="stat-card"><div class="stat-icon"><i class="fas fa-chart-line"></i></div><div class="stat-content"><h3>High</h3><div class="value" id="highCount">0</div></div></div>
+            <div class="stat-card"><div class="stat-icon"><i class="fas fa-shield"></i></div><div class="stat-content"><h3>Assets Scanned</h3><div class="value" id="assetCount">0</div></div></div>
         </div>
 
-        <!-- Input Panel -->
         <div class="input-panel">
-            <div class="panel-title">
-                <i class="fas fa-magnifying-glass"></i> Vulnerability Assessment
-            </div>
+            <div class="panel-title"><i class="fas fa-magnifying-glass"></i> Vulnerability Assessment</div>
             <div class="input-methods">
-                <!-- Manual entry -->
                 <div class="method">
                     <h3><i class="fas fa-keyboard"></i> Manual Asset List</h3>
-                    <textarea id="assetTextarea" placeholder="Enter one asset per line (e.g.,&#10;apache log4j&#10;windows server 2019&#10;CVE-2024-1234">apache log4j
-windows server 2019</textarea>
+                    <textarea id="assetTextarea" placeholder="Enter one asset per line (e.g.,&#10;apache log4j&#10;windows server 2019&#10;openssl"></textarea>
+                    <div style="display: flex; gap: 0.5rem; margin-top: 0.5rem;">
+                        <button type="button" class="btn-secondary" id="exampleBtn"><i class="fas fa-lightbulb"></i> Load Example</button>
+                        <button type="button" class="btn-secondary" id="clearBtn"><i class="fas fa-eraser"></i> Clear</button>
+                    </div>
                 </div>
-                <!-- File upload -->
                 <div class="method">
                     <h3><i class="fas fa-file-excel"></i> Import from File</h3>
                     <div class="file-upload">
-                        <label for="fileInput">
-                            <i class="fas fa-cloud-upload-alt"></i> Click to upload Excel or CSV
-                        </label>
+                        <label for="fileInput"><i class="fas fa-cloud-upload-alt"></i> Click to upload Excel or CSV</label>
                         <input type="file" id="fileInput" accept=".csv, .xls, .xlsx">
                         <p style="font-size:0.9rem; color:#64748b;">File should contain one asset per row (first column used).</p>
                     </div>
@@ -495,64 +110,43 @@ windows server 2019</textarea>
                 <button class="btn-primary" id="searchBtn"><i class="fas fa-search"></i> Find CVEs</button>
             </div>
             <div id="inputError" class="error-message" style="display: none;"></div>
+            <div id="summaryMessage" class="summary-message" style="display: none;"></div>
         </div>
 
-        <!-- Severity Chart -->
         <div class="chart-container" id="chartContainer" style="display: none;">
-            <div class="chart-box">
-                <canvas id="severityChart"></canvas>
-            </div>
+            <div class="chart-box"><canvas id="severityChart"></canvas></div>
             <div class="severity-legend" id="severityLegend"></div>
         </div>
 
-        <!-- Results Table -->
         <div class="table-container">
             <div class="table-header">
                 <h2><i class="fas fa-list"></i> Discovered Vulnerabilities</h2>
                 <div style="display: flex; gap: 1rem;">
                     <div class="sort-info"><i class="fas fa-sort-amount-down"></i> Latest CVEs first</div>
-                    <div class="search-box">
-                        <i class="fas fa-filter"></i>
-                        <input type="text" id="tableFilter" placeholder="Filter by asset, CVE...">
-                    </div>
+                    <div class="search-box"><i class="fas fa-filter"></i><input type="text" id="tableFilter" placeholder="Filter by asset, CVE..."></div>
                 </div>
             </div>
             <div style="overflow-x: auto;">
-                <table id="resultsTable">
-                    <thead>
-                        <tr>
-                            <th>Asset</th>
-                            <th>CVE ID</th>
-                            <th>Risk (CVSS)</th>
-                            <th>Vulnerability</th>
-                            <th>Mitigation / Advisory</th>
-                        </thead>
-                    <tbody id="tableBody">
-                        <tr><td colspan="5" style="text-align:center; padding:3rem;">No data. Enter assets and click search.</td></tr>
-                    </tbody>
-                </table>
+                <table id="resultsTable"><thead><tr><th>Asset</th><th>CVE ID</th><th>Risk (CVSS)</th><th>Vulnerability</th><th>Mitigation / Advisory</th></tr></thead><tbody id="tableBody"><tr><td colspan="5" style="text-align:center; padding:3rem;">No data. Enter assets and click search.</td></tr></tbody></table>
             </div>
         </div>
     </div>
 
-    <!-- Loading overlay -->
-    <div class="loading-overlay" id="loadingOverlay">
-        <div class="loading-spinner"></div>
-        <div style="font-weight:600;">Querying NVD, please wait...</div>
-    </div>
+    <div class="loading-overlay" id="loadingOverlay"><div class="loading-spinner"></div><div style="font-weight:600;">Querying NVD, please wait...</div></div>
 
     <script>
-        // Global variables
         let allResults = [];
         let severityChart = null;
 
-        // DOM elements
         const assetTextarea = document.getElementById('assetTextarea');
         const fileInput = document.getElementById('fileInput');
         const apiKeyInput = document.getElementById('apiKey');
         const searchBtn = document.getElementById('searchBtn');
+        const exampleBtn = document.getElementById('exampleBtn');
+        const clearBtn = document.getElementById('clearBtn');
         const loadingOverlay = document.getElementById('loadingOverlay');
         const inputError = document.getElementById('inputError');
+        const summaryMessage = document.getElementById('summaryMessage');
         const tableBody = document.getElementById('tableBody');
         const totalCvesSpan = document.getElementById('totalCves');
         const criticalCountSpan = document.getElementById('criticalCount');
@@ -561,22 +155,23 @@ windows server 2019</textarea>
         const chartContainer = document.getElementById('chartContainer');
         const tableFilter = document.getElementById('tableFilter');
 
-        // Helper: hide error
-        function hideError() {
-            inputError.style.display = 'none';
+        function hideError() { inputError.style.display = 'none'; }
+        function showError(msg) { inputError.textContent = msg; inputError.style.display = 'block'; }
+        function showSummary(msg, isSuccess = true) {
+            summaryMessage.style.display = 'flex';
+            summaryMessage.innerHTML = `<i class="fas ${isSuccess ? 'fa-check-circle' : 'fa-exclamation-triangle'}"></i> ${msg}`;
+            setTimeout(() => { summaryMessage.style.display = 'none'; }, 5000);
         }
 
-        // Helper: show error
-        function showError(msg) {
-            inputError.textContent = msg;
-            inputError.style.display = 'block';
-        }
+        exampleBtn.addEventListener('click', () => {
+            assetTextarea.value = "apache log4j\nwindows server 2019\nopenssl";
+            showSummary("Example assets loaded. Click 'Find CVEs' to start.", true);
+        });
+        clearBtn.addEventListener('click', () => { assetTextarea.value = ''; });
 
-        // Parse file using SheetJS
         fileInput.addEventListener('change', (e) => {
             const file = e.target.files[0];
             if (!file) return;
-
             const reader = new FileReader();
             reader.onload = (loadEvent) => {
                 try {
@@ -584,172 +179,112 @@ windows server 2019</textarea>
                     const workbook = XLSX.read(data, { type: 'array' });
                     const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
                     const rows = XLSX.utils.sheet_to_json(firstSheet, { header: 1, defval: '' });
-                    // Extract first column from each row, ignore header if looks like header
                     const assets = [];
                     for (let i = 0; i < rows.length; i++) {
                         if (rows[i].length > 0 && rows[i][0].toString().trim() !== '') {
                             assets.push(rows[i][0].toString().trim());
                         }
                     }
-                    if (assets.length > 0) {
-                        assetTextarea.value = assets.join('\n');
-                    } else {
-                        showError('No valid asset names found in file.');
-                    }
-                } catch (err) {
-                    showError('Failed to parse file: ' + err.message);
-                }
+                    if (assets.length > 0) assetTextarea.value = assets.join('\n');
+                    else showError('No valid asset names found in file.');
+                } catch (err) { showError('Failed to parse file: ' + err.message); }
             };
             reader.readAsArrayBuffer(file);
         });
 
-        // Extract severity info from CVE metrics
         function getSeverityInfo(metrics) {
             if (!metrics) return { severity: 'Unknown', score: null, vector: null, class: '' };
-            let cvssData = null;
-            let version = null;
-
-            if (metrics.cvssMetricV31 && metrics.cvssMetricV31.length > 0) {
-                cvssData = metrics.cvssMetricV31[0].cvssData;
-                version = 'V3.1';
-            } else if (metrics.cvssMetricV30 && metrics.cvssMetricV30.length > 0) {
-                cvssData = metrics.cvssMetricV30[0].cvssData;
-                version = 'V3.0';
-            } else if (metrics.cvssMetricV2 && metrics.cvssMetricV2.length > 0) {
-                cvssData = metrics.cvssMetricV2[0].cvssData;
-                version = 'V2.0';
-            }
-
+            let cvssData = null, version = null;
+            if (metrics.cvssMetricV31 && metrics.cvssMetricV31.length > 0) { cvssData = metrics.cvssMetricV31[0].cvssData; version = 'V3.1'; }
+            else if (metrics.cvssMetricV30 && metrics.cvssMetricV30.length > 0) { cvssData = metrics.cvssMetricV30[0].cvssData; version = 'V3.0'; }
+            else if (metrics.cvssMetricV2 && metrics.cvssMetricV2.length > 0) { cvssData = metrics.cvssMetricV2[0].cvssData; version = 'V2.0'; }
             if (!cvssData) return { severity: 'N/A', score: null, vector: null, class: '' };
-
             const score = cvssData.baseScore;
             let severity = cvssData.baseSeverity || (score >= 7.0 ? 'HIGH' : (score >= 4.0 ? 'MEDIUM' : 'LOW'));
             severity = severity ? severity.charAt(0).toUpperCase() + severity.slice(1).toLowerCase() : 'Unknown';
-
             let severityClass = '';
             if (severity === 'Critical') severityClass = 'severity-critical';
             else if (severity === 'High') severityClass = 'severity-high';
             else if (severity === 'Medium') severityClass = 'severity-medium';
             else if (severity === 'Low') severityClass = 'severity-low';
-
-            // Build vector string
             let vector = cvssData.vectorString || '';
             if (vector && version) vector = `${version} ${vector}`;
-
             return { severity, score, vector, class: severityClass };
         }
 
-        // Get first reference URL (for mitigation)
         function getFirstReference(references) {
             if (!references || references.length === 0) return null;
-            // Prefer tags like 'Vendor Advisory' or just first
-            for (let ref of references) {
-                if (ref.tags && ref.tags.includes('Vendor Advisory')) return ref.url;
-            }
+            for (let ref of references) if (ref.tags && ref.tags.includes('Vendor Advisory')) return ref.url;
             return references[0].url;
         }
 
-        // Fetch CVEs for a single asset
         async function fetchForAsset(asset, apiKey) {
             const url = new URL('https://services.nvd.nist.gov/rest/json/cves/2.0');
             url.searchParams.append('keywordSearch', asset);
             url.searchParams.append('resultsPerPage', 20);
             url.searchParams.append('sortBy', 'publishDate');
-            url.searchParams.append('sortOrder', 'desc');  // ensure latest first from API
-
+            url.searchParams.append('sortOrder', 'desc');
             const headers = {};
             if (apiKey.trim()) headers['apiKey'] = apiKey.trim();
-
             const response = await fetch(url, { headers });
-            if (!response.ok) {
-                if (response.status === 403) throw new Error('Invalid API key or rate limited. Try without key.');
-                if (response.status === 429) throw new Error('Rate limit exceeded. Wait or use API key.');
-                throw new Error(`HTTP ${response.status}`);
-            }
+            if (response.status === 404) return []; // No CVEs found
+            if (!response.ok) throw new Error(`HTTP ${response.status}`);
             const data = await response.json();
             return (data.vulnerabilities || []).map(v => v.cve);
         }
 
-        // Main search
         async function onSearch() {
             hideError();
-            const rawAssets = assetTextarea.value.split('\n')
-                .map(line => line.trim())
-                .filter(line => line.length > 0);
-            if (rawAssets.length === 0) {
-                showError('Please enter at least one asset.');
-                return;
-            }
-
+            const rawAssets = assetTextarea.value.split('\n').map(line => line.trim()).filter(line => line.length > 0);
+            if (rawAssets.length === 0) { showError('Please enter at least one asset.'); return; }
             const apiKey = apiKeyInput.value;
-
-            // Show loading
             loadingOverlay.style.display = 'flex';
             searchBtn.disabled = true;
             allResults = [];
-
-            // Process assets sequentially to respect rate limits
-            let assetIndex = 0;
+            let assetsWithResults = 0;
             const errors = [];
 
             for (const asset of rawAssets) {
                 try {
                     const cves = await fetchForAsset(asset, apiKey);
+                    if (cves.length > 0) assetsWithResults++;
                     for (const cve of cves) {
                         const id = cve.id;
                         const description = cve.descriptions?.find(d => d.lang === 'en')?.value || 'No description';
                         const published = cve.published;
                         const metrics = cve.metrics;
                         const { severity, score, vector, class: sevClass } = getSeverityInfo(metrics);
-                        const references = cve.references;
-                        const mitigationUrl = getFirstReference(references);
-
-                        allResults.push({
-                            asset,
-                            cveId: id,
-                            description,
-                            published,
-                            severity,
-                            score,
-                            vector,
-                            mitigationUrl,
-                            sevClass,
-                        });
+                        const mitigationUrl = getFirstReference(cve.references);
+                        allResults.push({ asset, cveId: id, description, published, severity, score, vector, mitigationUrl, sevClass });
                     }
-                    // Delay between requests to avoid hitting rate limits too hard
-                    if (apiKey.trim() === '') {
-                        // No API key: 6 sec delay (max 5 per 30s, so 6s safe)
-                        await new Promise(resolve => setTimeout(resolve, 6000));
-                    } else {
-                        // With key: 0.6 sec delay (50 per 30s = 0.6s)
-                        await new Promise(resolve => setTimeout(resolve, 600));
-                    }
+                    // delay to respect rate limits
+                    await new Promise(resolve => setTimeout(resolve, apiKey.trim() ? 600 : 6000));
                 } catch (err) {
-                    errors.push(`Asset "${asset}": ${err.message}`);
+                    errors.push(`${asset}: ${err.message}`);
                 }
-                assetIndex++;
             }
-
             loadingOverlay.style.display = 'none';
             searchBtn.disabled = false;
 
-            if (errors.length > 0) {
-                showError('Some assets failed: ' + errors.join('; '));
+            if (errors.length > 0) showError('Some assets failed: ' + errors.join('; '));
+            if (assetsWithResults === 0 && allResults.length === 0) {
+                showSummary('No CVEs found for any of the assets. Try different keywords.', false);
+            } else if (assetsWithResults < rawAssets.length) {
+                showSummary(`Found CVEs for ${assetsWithResults} out of ${rawAssets.length} assets.`);
+            } else {
+                showSummary(`Found CVEs for all ${rawAssets.length} assets.`);
             }
 
-            // Sort results by published date (descending – latest first)
+            // Sort by published date (latest first)
             allResults.sort((a, b) => {
                 if (!a.published) return 1;
                 if (!b.published) return -1;
                 return new Date(b.published) - new Date(a.published);
             });
-
             renderResults();
         }
 
-        // Render table and charts
         function renderResults() {
-            // Update stats
             const total = allResults.length;
             const critical = allResults.filter(r => r.severity === 'Critical').length;
             const high = allResults.filter(r => r.severity === 'High').length;
@@ -760,7 +295,6 @@ windows server 2019</textarea>
             highCountSpan.textContent = high;
             assetCountSpan.textContent = assets;
 
-            // Build table HTML
             if (total === 0) {
                 tableBody.innerHTML = '<tr><td colspan="5" style="text-align:center; padding:3rem;">No vulnerabilities found. Try different assets.</td></tr>';
                 chartContainer.style.display = 'none';
@@ -780,12 +314,8 @@ windows server 2019</textarea>
                 </tr>`;
             });
             tableBody.innerHTML = html;
-
-            // Show chart container and update chart
             chartContainer.style.display = 'flex';
             updateChart();
-
-            // Filter functionality
             tableFilter.addEventListener('input', filterTable);
         }
 
@@ -799,10 +329,7 @@ windows server 2019</textarea>
         function filterTable() {
             const filter = tableFilter.value.toLowerCase();
             const rows = document.querySelectorAll('#tableBody tr');
-            rows.forEach(row => {
-                const text = row.innerText.toLowerCase();
-                row.style.display = text.includes(filter) ? '' : 'none';
-            });
+            rows.forEach(row => row.style.display = row.innerText.toLowerCase().includes(filter) ? '' : 'none');
         }
 
         function updateChart() {
@@ -814,36 +341,16 @@ windows server 2019</textarea>
                 Low: allResults.filter(r => r.severity === 'Low').length,
                 Unknown: allResults.filter(r => !r.severity || r.severity === 'N/A' || r.severity === 'Unknown').length
             };
-
             if (severityChart) severityChart.destroy();
-
             severityChart = new Chart(ctx, {
                 type: 'doughnut',
-                data: {
-                    labels: Object.keys(counts),
-                    datasets: [{
-                        data: Object.values(counts),
-                        backgroundColor: ['#7f1d1d', '#991b1b', '#b45309', '#065f46', '#64748b'],
-                        borderWidth: 0
-                    }]
-                },
-                options: {
-                    cutout: '70%',
-                    plugins: { legend: { display: false }, tooltip: { callbacks: { label: (ctx) => `${ctx.label}: ${ctx.raw}` } } }
-                }
+                data: { labels: Object.keys(counts), datasets: [{ data: Object.values(counts), backgroundColor: ['#7f1d1d', '#991b1b', '#b45309', '#065f46', '#64748b'], borderWidth: 0 }] },
+                options: { cutout: '70%', plugins: { legend: { display: false }, tooltip: { callbacks: { label: (ctx) => `${ctx.label}: ${ctx.raw}` } } } }
             });
-
-            // Build legend
             const legendDiv = document.getElementById('severityLegend');
-            legendDiv.innerHTML = Object.entries(counts).map(([sev, cnt]) => `
-                <div class="legend-item">
-                    <span class="color-dot" style="background: ${sev === 'Critical'?'#7f1d1d': sev==='High'?'#991b1b': sev==='Medium'?'#b45309': sev==='Low'?'#065f46':'#64748b'}"></span>
-                    <span><strong>${sev}</strong>: ${cnt}</span>
-                </div>
-            `).join('');
+            legendDiv.innerHTML = Object.entries(counts).map(([sev, cnt]) => `<div class="legend-item"><span class="color-dot" style="background: ${sev === 'Critical'?'#7f1d1d': sev==='High'?'#991b1b': sev==='Medium'?'#b45309': sev==='Low'?'#065f46':'#64748b'}"></span><span><strong>${sev}</strong>: ${cnt}</span></div>`).join('');
         }
 
-        // Event listeners
         searchBtn.addEventListener('click', onSearch);
     </script>
 </body>
