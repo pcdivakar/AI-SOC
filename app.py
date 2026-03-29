@@ -31,11 +31,6 @@ with st.sidebar:
         st.image(logo_url, width=150)
     else:
         st.markdown("## 📊 OT Security Dashboard")
-    st.header("Configuration")
-    if not nvd_api_key:
-        st.warning("Using public NVD endpoint (rate‑limited). For better performance, add a free API key.")
-    if not groq_api_key:
-        st.info("Groq API key not set. AI classification and chatbot disabled.")
     st.markdown("---")
     st.markdown("Upload a PCAP file to see asset classification and vulnerability data.")
     st.markdown("**Supported OT protocols:** Modbus, S7, DNP3, BACnet, EtherNet/IP, IEC 104, OPC UA, CODESYS, Profinet, EtherCAT, MQTT, IEC 61850, and more.")
@@ -63,74 +58,46 @@ def prepare_chart_data(df, *cols):
 
 # Helper: map human-friendly labels to actual column names
 def map_column(label, df_columns):
-    """Map a human-friendly label to an actual DataFrame column name."""
     if not label:
         return None
     label_clean = label.lower().replace(' ', '_').replace('-', '_')
-    # Direct match
     if label_clean in df_columns:
         return label_clean
-    # Try substring match
     for col in df_columns:
         if label_clean in col or col in label_clean:
             return col
-    # Special cases
     special = {
-        'ip_address': 'ip',
-        'ipaddr': 'ip',
-        'ip': 'ip',
-        'asset_type': 'asset_type',
-        'assettype': 'asset_type',
-        'vendor': 'vendor',
-        'ports': 'ports',
-        'port': 'ports',
-        'os': 'os',
-        'operating_system': 'os',
-        'cves': 'cves',
-        'cve': 'cves',
-        'hostnames': 'hostnames',
-        'hostname': 'hostnames',
-        'ot_protocols': 'ot_protocols',
-        'protocol': 'ot_protocols',
-        'http_user_agents': 'http_user_agents',
-        'user_agent': 'http_user_agents',
-        'dns_queries': 'dns_queries',
-        'dns': 'dns_queries',
-        'snmp_communities': 'snmp_communities',
-        'snmp': 'snmp_communities',
-        'firmware_version': 'firmware_version',
-        'firmware': 'firmware_version',
-        'model_number': 'model_number',
-        'model': 'model_number',
+        'ip_address': 'ip', 'ipaddr': 'ip', 'ip': 'ip',
+        'asset_type': 'asset_type', 'assettype': 'asset_type',
+        'vendor': 'vendor', 'ports': 'ports', 'port': 'ports',
+        'os': 'os', 'operating_system': 'os',
+        'cves': 'cves', 'cve': 'cves',
+        'hostnames': 'hostnames', 'hostname': 'hostnames',
+        'ot_protocols': 'ot_protocols', 'protocol': 'ot_protocols',
+        'http_user_agents': 'http_user_agents', 'user_agent': 'http_user_agents',
+        'dns_queries': 'dns_queries', 'dns': 'dns_queries',
+        'snmp_communities': 'snmp_communities', 'snmp': 'snmp_communities',
+        'firmware_version': 'firmware_version', 'firmware': 'firmware_version',
+        'model_number': 'model_number', 'model': 'model_number',
         'confidence': 'confidence',
-        'location': None,  # no direct column
-        'country': None,
-        'city': None,
-        'geographic': None,
     }
-    if label_clean in special:
-        return special[label_clean]
-    return None
+    return special.get(label_clean, None)
 
-# Helper: parse a single chart string (e.g., "bar|asset_type||Asset Types")
 def parse_chart_spec(spec_str):
     parts = spec_str.split('|')
     if len(parts) < 2:
         return None
     chart_type = parts[0].strip().lower()
-    # map common aliases
     if chart_type == 'map':
         chart_type = 'scatter_map'
     elif chart_type == 'scattergeo':
         chart_type = 'scatter_map'
     return {'type': chart_type, 'params': parts[1:]}
 
-# Helper: render a chart from a chart spec dictionary
 def render_chart(spec, df):
     chart_type = spec['type']
     params = spec['params']
     try:
-        # Determine if we should use counts (value_counts) for bar/pie
         use_count = False
         y_param = None
         if len(params) >= 2:
@@ -140,7 +107,6 @@ def render_chart(spec, df):
             else:
                 y_param = params[1].strip()
 
-        # Map column names
         if chart_type in ['bar', 'pie', 'line', 'scatter', 'area']:
             x_col = map_column(params[0].strip(), df.columns)
             if x_col is None:
@@ -148,7 +114,6 @@ def render_chart(spec, df):
             y_col = map_column(y_param, df.columns) if y_param else None
             title = params[2].strip() if len(params) > 2 else None
 
-            # For bar/pie with no y or y=Count, we do value_counts on x
             if (chart_type in ['bar', 'pie']) and (y_col is None or use_count):
                 counts = df[x_col].value_counts().reset_index()
                 counts.columns = [x_col, 'count']
@@ -158,12 +123,10 @@ def render_chart(spec, df):
                     fig = generate_chart('pie', counts, names_col=x_col, values_col='count', title=title)
                 return fig
             else:
-                # Normal case with numeric y column
                 data = prepare_chart_data(df, x_col, y_col)
                 if chart_type == 'bar':
                     fig = generate_chart('bar', data, x_col=x_col, y_col=y_col, title=title)
                 elif chart_type == 'pie':
-                    # For pie, y_col might be numeric; if not, fallback to counts
                     if y_col and data[y_col].dtype in ['int64', 'float64']:
                         fig = generate_chart('pie', data, names_col=x_col, values_col=y_col, title=title)
                     else:
@@ -277,7 +240,6 @@ def render_chart(spec, df):
                 lat_col = map_column(params[0].strip(), df.columns)
                 lon_col = map_column(params[1].strip(), df.columns)
                 if None in (lat_col, lon_col):
-                    # Try to use IP geolocation if not found
                     if 'ip' in df.columns and (lat_col is None or lon_col is None):
                         df_temp = df.copy()
                         df_temp['lat'] = df_temp['ip'].apply(lambda x: random.uniform(-90, 90))
@@ -297,8 +259,7 @@ def render_chart(spec, df):
                 return fig
 
         elif chart_type == 'choropleth':
-            # Choropleth maps require geographic location codes. Our data likely doesn't have them.
-            raise ValueError("Choropleth maps require geographic location codes (e.g., country names or codes). The current data does not contain such columns. Try using a scatter_map for IP-based locations.")
+            raise ValueError("Choropleth maps require geographic location codes. The current data does not contain such columns. Try using a scatter_map for IP-based locations.")
 
         else:
             return None
@@ -343,8 +304,8 @@ if st.session_state.analysis_complete:
             df_assets = enrich_assets_with_vulnerabilities(df_assets, nvd_api_key)
             st.session_state.assets_df = df_assets
 
-    # Tabs: Asset Tables, Vulnerability Lookup, AI Dashboard
-    tab_assets, tab_vuln, tab_dashboard = st.tabs(["📊 Asset Tables", "🔍 Vulnerability Lookup", "📈 AI Dashboard"])
+    # Tabs: Asset Tables, Vulnerability Lookup
+    tab_assets, tab_vuln = st.tabs(["📊 Asset Tables", "🔍 Vulnerability Lookup"])
 
     with tab_assets:
         st.subheader("🏭 OT/ICS Assets")
@@ -402,44 +363,6 @@ if st.session_state.analysis_complete:
             if keyword_input in st.session_state.keyword_cves and st.button("Clear Keyword Results"):
                 del st.session_state.keyword_cves[keyword_input]
                 st.rerun()
-
-    with tab_dashboard:
-        st.header("AI‑Generated Dashboard")
-        if logo_url:
-            st.image(logo_url, width=200)
-
-        # Clear dashboard button
-        if st.session_state.dashboard_definition is not None:
-            if st.button("🗑️ Clear Dashboard"):
-                st.session_state.dashboard_definition = None
-                st.rerun()
-
-        if st.session_state.dashboard_definition:
-            dash = st.session_state.dashboard_definition
-            st.subheader(dash['title'])
-
-            # If there are no charts, show warning
-            if not dash['charts']:
-                st.warning("Dashboard definition contains no charts. Please request a new dashboard with a valid list of charts.")
-                st.code(dash, language='json')
-            else:
-                # Render charts in a 2‑column grid
-                cols = st.columns(2)
-                rendered_count = 0
-                for i, chart_spec in enumerate(dash['charts']):
-                    with cols[i % 2]:
-                        fig = render_chart(chart_spec, df_assets)
-                        if fig:
-                            st.plotly_chart(fig, use_container_width=True)
-                            rendered_count += 1
-                        else:
-                            st.warning(f"Could not render chart: {chart_spec}")
-                if rendered_count == 0:
-                    st.error("No charts could be rendered. The dashboard definitions may contain columns that don't exist in the asset data. Please request a new dashboard with simpler columns like 'asset_type', 'vendor', or 'os'.")
-                    with st.expander("Show raw dashboard definition"):
-                        st.code(dash, language='json')
-        else:
-            st.info("No dashboard generated yet. Go to the AI Assistant below and ask something like: 'Create a security dashboard showing asset types, vendors, and OS distribution'.")
 
     # AI Assistant (chat interface)
     if groq_api_key:
@@ -512,7 +435,6 @@ if st.session_state.analysis_complete:
                     if len(parts) >= 2:
                         title = parts[0].replace("DASHBOARD:", "").strip()
                         charts_str = parts[1]
-                        # Split by semicolon to get individual chart specs
                         chart_specs = [spec.strip() for spec in charts_str.split(';') if spec.strip()]
                         dashboard_charts = []
                         for spec in chart_specs:
@@ -523,7 +445,7 @@ if st.session_state.analysis_complete:
                             'title': title,
                             'charts': dashboard_charts
                         }
-                        st.success(f"Dashboard '{title}' created! Switch to the 'AI Dashboard' tab to view it.")
+                        st.success(f"Dashboard '{title}' created! It will appear below.")
                     else:
                         st.write(answer)
                 else:
@@ -534,7 +456,6 @@ if st.session_state.analysis_complete:
                             chart_line = line.strip()
                             break
                     if chart_line:
-                        # Remove "CHART:" prefix
                         spec_str = chart_line[6:].strip()
                         chart_spec = parse_chart_spec(spec_str)
                         if chart_spec:
@@ -548,5 +469,38 @@ if st.session_state.analysis_complete:
                     else:
                         st.markdown("**AI Response:**")
                         st.write(answer)
+
+        # Display the dashboard if it exists (after AI)
+        if st.session_state.dashboard_definition:
+            st.markdown("---")
+            dash = st.session_state.dashboard_definition
+            st.header(f"📊 {dash['title']} Dashboard")
+            if logo_url:
+                st.image(logo_url, width=200)
+
+            # Clear dashboard button
+            if st.button("🗑️ Clear Dashboard"):
+                st.session_state.dashboard_definition = None
+                st.rerun()
+
+            # If no charts, show error
+            if not dash['charts']:
+                st.warning("Dashboard definition contains no charts.")
+                with st.expander("Raw definition"):
+                    st.code(dash, language='json')
+            else:
+                # Render in 2‑column grid
+                cols = st.columns(2)
+                rendered_count = 0
+                for i, chart_spec in enumerate(dash['charts']):
+                    with cols[i % 2]:
+                        fig = render_chart(chart_spec, df_assets)
+                        if fig:
+                            st.plotly_chart(fig, use_container_width=True)
+                            rendered_count += 1
+                        else:
+                            st.warning(f"Could not render chart: {chart_spec}")
+                if rendered_count == 0:
+                    st.error("No charts could be rendered. Please request a new dashboard with columns that exist in the asset data (e.g., 'asset_type', 'vendor', 'os').")
     else:
         st.error("Groq API key not configured. Add GROQ_API_KEY to secrets to use the AI assistant.")
