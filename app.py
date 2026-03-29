@@ -24,7 +24,7 @@ groq_api_key = st.secrets.get("GROQ_API_KEY", os.getenv("GROQ_API_KEY"))
 with st.sidebar:
     st.header("Configuration")
     if not nvd_api_key:
-        st.warning("NVD API key not set. NVD queries may fail.")
+        st.warning("Using public NVD endpoint (rate‑limited). For better performance, add a free API key.")
     if not groq_api_key:
         st.info("Groq API key not set. AI classification and chatbot disabled.")
     st.markdown("---")
@@ -118,21 +118,20 @@ if st.session_state.analysis_complete:
     with tab2:
         st.markdown("Enter a keyword (e.g., product name, vendor) to get a list of recent CVEs.")
         keyword_input = st.text_input("Keyword (e.g., Apache, Windows 10, Modbus):")
-        if st.button("Search CVEs by Keyword") and keyword_input and nvd_api_key:
+        if st.button("Search CVEs by Keyword") and keyword_input:
+            if not nvd_api_key:
+                st.info("No API key – using public endpoint. Searches may be slow; please wait.")
             with st.spinner(f"Searching NVD for '{keyword_input}'..."):
                 results = fetch_cves_by_keyword(keyword_input, nvd_api_key, limit=15)
                 if results:
                     st.session_state.keyword_cves[keyword_input] = results
                     df_keyword = pd.DataFrame(results)
-                    # Show selected columns
                     display_cols = ["cve_id", "published", "epss", "kev", "description"]
                     df_keyword = df_keyword[display_cols]
                     st.dataframe(df_keyword, use_container_width=True)
                     st.success(f"Found {len(results)} CVEs")
                 else:
                     st.warning(f"No CVEs found for keyword '{keyword_input}'. Try a different term.")
-        elif keyword_input and not nvd_api_key:
-            st.warning("NVD API key not set. Keyword search may fail or be rate-limited.")
 
         if keyword_input in st.session_state.keyword_cves and st.button("Clear Keyword Results"):
             del st.session_state.keyword_cves[keyword_input]
