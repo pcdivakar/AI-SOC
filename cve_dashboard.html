@@ -283,6 +283,14 @@
             font-weight: 600;
         }
 
+        .sort-info {
+            font-size: 0.8rem;
+            color: #64748b;
+            background: #f1f5f9;
+            padding: 0.25rem 0.75rem;
+            border-radius: 1rem;
+        }
+
         .search-box {
             display: flex;
             align-items: center;
@@ -501,9 +509,12 @@ windows server 2019</textarea>
         <div class="table-container">
             <div class="table-header">
                 <h2><i class="fas fa-list"></i> Discovered Vulnerabilities</h2>
-                <div class="search-box">
-                    <i class="fas fa-filter"></i>
-                    <input type="text" id="tableFilter" placeholder="Filter by asset, CVE...">
+                <div style="display: flex; gap: 1rem;">
+                    <div class="sort-info"><i class="fas fa-sort-amount-down"></i> Latest CVEs first</div>
+                    <div class="search-box">
+                        <i class="fas fa-filter"></i>
+                        <input type="text" id="tableFilter" placeholder="Filter by asset, CVE...">
+                    </div>
                 </div>
             </div>
             <div style="overflow-x: auto;">
@@ -515,8 +526,7 @@ windows server 2019</textarea>
                             <th>Risk (CVSS)</th>
                             <th>Vulnerability</th>
                             <th>Mitigation / Advisory</th>
-                        </tr>
-                    </thead>
+                        </thead>
                     <tbody id="tableBody">
                         <tr><td colspan="5" style="text-align:center; padding:3rem;">No data. Enter assets and click search.</td></tr>
                     </tbody>
@@ -643,7 +653,9 @@ windows server 2019</textarea>
         async function fetchForAsset(asset, apiKey) {
             const url = new URL('https://services.nvd.nist.gov/rest/json/cves/2.0');
             url.searchParams.append('keywordSearch', asset);
-            url.searchParams.append('resultsPerPage', 20); // limit per asset
+            url.searchParams.append('resultsPerPage', 20);
+            url.searchParams.append('sortBy', 'publishDate');
+            url.searchParams.append('sortOrder', 'desc');  // ensure latest first from API
 
             const headers = {};
             if (apiKey.trim()) headers['apiKey'] = apiKey.trim();
@@ -724,6 +736,13 @@ windows server 2019</textarea>
             if (errors.length > 0) {
                 showError('Some assets failed: ' + errors.join('; '));
             }
+
+            // Sort results by published date (descending – latest first)
+            allResults.sort((a, b) => {
+                if (!a.published) return 1;
+                if (!b.published) return -1;
+                return new Date(b.published) - new Date(a.published);
+            });
 
             renderResults();
         }
