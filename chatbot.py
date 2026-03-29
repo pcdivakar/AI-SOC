@@ -1,9 +1,10 @@
 import os
 import google.generativeai as genai
 
-def ask_ai(question, context, model="gemini-1.5-flash", gemini_api_key=None):
+def ask_ai(question, context, model=None, gemini_api_key=None):
     """
     Send a question with context to Google Gemini API and return the answer.
+    Dynamically selects the first available model that supports generateContent.
     """
     if not gemini_api_key:
         gemini_api_key = os.environ.get("GEMINI_API_KEY")
@@ -12,29 +13,40 @@ def ask_ai(question, context, model="gemini-1.5-flash", gemini_api_key=None):
 
     genai.configure(api_key=gemini_api_key)
 
-    # List of models to try (order by preference, based on India availability)
-    model_candidates = [
-        model,                     # user-provided or default
-        "gemini-1.5-flash",
-        "gemini-1.5-flash-lite",
-        "gemini-1.5-pro",
-        "gemini-2.0-flash-exp"
-    ]
+    # Get all models that support generateContent
+    try:
+        all_models = genai.list_models()
+        candidates = [m.name for m in all_models if 'generateContent' in m.supported_generation_methods]
+        if not candidates:
+            return "Error: No Gemini models available for content generation. Check API key and enable Generative Language API."
+    except Exception as e:
+        return f"Error listing models: {str(e)}"
+
+    # If a specific model was requested, try it first; otherwise find a Flash model
+    if model:
+        test_models = [model] + candidates
+    else:
+        # Prefer models with 'flash' in name (gemini-1.5-flash, etc.)
+        flash_models = [m for m in candidates if 'flash' in m.lower()]
+        test_models = flash_models + candidates  # fallback to any model
+
     model_obj = None
     last_error = None
-    for candidate in model_candidates:
+    for candidate in test_models:
         try:
+            # Create model instance and test with a minimal request
             model_obj = genai.GenerativeModel(candidate)
-            # Test with a minimal request to verify the model exists
             _ = model_obj.generate_content("test", generation_config={"max_output_tokens": 1})
+            # Success
             break
         except Exception as e:
             last_error = e
             continue
-    if model_obj is None:
-        return f"Error: No valid Gemini model found. Last error: {last_error}"
 
-    # System instruction for chart/dashboard commands (same as before)
+    if model_obj is None:
+        return f"Error: No working Gemini model found. Last error: {last_error}"
+
+    # System instruction for chart/dashboard commands
     system_msg = (
         "You are a cybersecurity assistant specialized in analyzing network traffic and vulnerabilities. "
         "Use the provided context to answer the user's question accurately and concisely.\n\n"
