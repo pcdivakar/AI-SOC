@@ -10,6 +10,8 @@ from asset_classifier import classify_asset
 from vulnerability import fetch_nvd, fetch_epss, fetch_kev_status
 from vulnerability_enrichment import enrich_assets_with_vulnerabilities, fetch_cves_by_keyword
 from chatbot import ask_ai
+from chart_generator import generate_chart
+import plotly.graph_objects as go
 
 load_dotenv()
 utils.init_db()
@@ -137,10 +139,10 @@ if st.session_state.analysis_complete:
             del st.session_state.keyword_cves[keyword_input]
             st.rerun()
 
-    # AI Assistant (Groq)
+    # AI Assistant (Groq) with chart capabilities
     if groq_api_key:
         st.subheader("🤖 AI Assistant (Powered by Groq)")
-        st.markdown("Ask about the assets, vulnerabilities, or general questions related to the PCAP analysis.")
+        st.markdown("Ask about the assets, vulnerabilities, or request charts (e.g., 'Show me a bar chart of asset types' or 'Create a pie chart of vendors').")
 
         # Build context
         asset_summary = []
@@ -166,7 +168,7 @@ if st.session_state.analysis_complete:
                 for cve in cves[:10]:
                     context += f"- {cve['cve_id']}: EPSS={cve['epss']}, KEV={cve['kev']}, Desc={cve['description'][:100]}...\n"
 
-        user_question = st.text_area("Ask a question (e.g., 'What assets are web servers?' or 'Show me all CVEs with EPSS > 0.5')")
+        user_question = st.text_area("Ask a question or request a chart (e.g., 'Create a bar chart of asset types')")
         if st.button("Ask AI") and user_question:
             with st.spinner("Thinking..."):
                 # Auto‑fetch CVEs mentioned in the question
@@ -197,7 +199,49 @@ if st.session_state.analysis_complete:
                         context += "\n\nSpecific asset details:\n" + "\n".join(ip_context)
 
                 answer = ask_ai(user_question, context, groq_api_key=groq_api_key)
-                st.markdown("**AI Response:**")
-                st.write(answer)
+
+                # Check if the answer contains a chart command
+                chart_match = re.match(r'CHART:\s*(\w+)\|([^|]+)(?:\|([^|]+))?(?:\|([^|]+))?', answer, re.IGNORECASE)
+                if chart_match:
+                    chart_type = chart_match.group(1).lower()
+                    params = [p.strip() if p else None for p in chart_match.groups()[1:]]
+                    try:
+                        if chart_type == 'bar':
+                            x = params[0]
+                            y = params[1] if len(params) > 1 else None
+                            title = params[2] if len(params) > 2 else None
+                            fig = generate_chart('bar', df_assets, x=x, y=y, title=title)
+                        elif chart_type == 'pie':
+                            names = params[0]
+                            values = params[1] if len(params) > 1 else None
+                            title = params[2] if len(params) > 2 else None
+                            fig = generate_chart('pie', df_assets, names_col=names, values_col=values, title=title)
+                        elif chart_type == 'line':
+                            x, y = params[0], params[1]
+                            title = params[2] if len(params) > 2 else None
+                            fig = generate_chart('line', df_assets, x_col=x, y_col=y, title=title)
+                        elif chart_type == 'heatmap':
+                            x, y, z = params[0], params[1], params[2]
+                            title = params[3] if len(params) > 3 else None
+                            fig = generate_chart('heatmap', df_assets, x_col=x, y_col=y, z_col=z, title=title)
+                        elif chart_type == 'scatter':
+                            x, y = params[0], params[1]
+                            color = params[2] if len(params) > 2 else None
+                            title = params[3] if len(params) > 3 else None
+                            fig = generate_chart('scatter', df_assets, x_col=x, y_col=y, color_col=color, title=title)
+                        else:
+                            st.error(f"Unknown chart type: {chart_type}")
+                            fig = None
+
+                        if fig:
+                            st.plotly_chart(fig, use_container_width=True)
+                        else:
+                            st.write(answer)
+                    except Exception as e:
+                        st.error(f"Failed to generate chart: {e}")
+                        st.write(answer)
+                else:
+                    st.markdown("**AI Response:**")
+                    st.write(answer)
     else:
         st.error("Groq API key not configured. Add GROQ_API_KEY to secrets to use the AI chatbot.")
