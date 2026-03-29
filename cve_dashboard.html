@@ -127,7 +127,7 @@
                 </div>
             </div>
             <div style="overflow-x: auto;">
-                <table id="resultsTable"><thead><tr><th>Asset</th><th>CVE ID</th><th>Risk (CVSS)</th><th>Vulnerability</th><th>Mitigation / Advisory</th></tr></thead><tbody id="tableBody"><tr><td colspan="5" style="text-align:center; padding:3rem;">No data. Enter assets and click search.</td></tr></tbody></table>
+                <table id="resultsTable"><thead><tr><th>Asset</th><th>CVE ID</th><th>Risk (CVSS)</th><th>Vulnerability</th><th>Mitigation / Advisory</th></thead><tbody id="tableBody"><tr><td colspan="5" style="text-align:center; padding:3rem;">No data. Enter assets and click search.</td></tr></tbody></table>
             </div>
         </div>
     </div>
@@ -227,7 +227,7 @@
             const headers = {};
             if (apiKey.trim()) headers['apiKey'] = apiKey.trim();
             const response = await fetch(url, { headers });
-            if (response.status === 404) return []; // No CVEs found
+            if (response.status === 404) return [];
             if (!response.ok) throw new Error(`HTTP ${response.status}`);
             const data = await response.json();
             return (data.vulnerabilities || []).map(v => v.cve);
@@ -257,7 +257,6 @@
                         const mitigationUrl = getFirstReference(cve.references);
                         allResults.push({ asset, cveId: id, description, published, severity, score, vector, mitigationUrl, sevClass });
                     }
-                    // delay to respect rate limits
                     await new Promise(resolve => setTimeout(resolve, apiKey.trim() ? 600 : 6000));
                 } catch (err) {
                     errors.push(`${asset}: ${err.message}`);
