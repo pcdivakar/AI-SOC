@@ -200,45 +200,60 @@ if st.session_state.analysis_complete:
 
                 answer = ask_ai(user_question, context, groq_api_key=groq_api_key)
 
-                # Check if the answer contains a chart command
-                chart_match = re.match(r'CHART:\s*(\w+)\|([^|]+)(?:\|([^|]+))?(?:\|([^|]+))?', answer, re.IGNORECASE)
-                if chart_match:
-                    chart_type = chart_match.group(1).lower()
-                    params = [p.strip() if p else None for p in chart_match.groups()[1:]]
-                    try:
-                        if chart_type == 'bar':
-                            x = params[0]
-                            y = params[1] if len(params) > 1 else None
-                            title = params[2] if len(params) > 2 else None
-                            fig = generate_chart('bar', df_assets, x=x, y=y, title=title)
-                        elif chart_type == 'pie':
-                            names = params[0]
-                            values = params[1] if len(params) > 1 else None
-                            title = params[2] if len(params) > 2 else None
-                            fig = generate_chart('pie', df_assets, names_col=names, values_col=values, title=title)
-                        elif chart_type == 'line':
-                            x, y = params[0], params[1]
-                            title = params[2] if len(params) > 2 else None
-                            fig = generate_chart('line', df_assets, x_col=x, y_col=y, title=title)
-                        elif chart_type == 'heatmap':
-                            x, y, z = params[0], params[1], params[2]
-                            title = params[3] if len(params) > 3 else None
-                            fig = generate_chart('heatmap', df_assets, x_col=x, y_col=y, z_col=z, title=title)
-                        elif chart_type == 'scatter':
-                            x, y = params[0], params[1]
-                            color = params[2] if len(params) > 2 else None
-                            title = params[3] if len(params) > 3 else None
-                            fig = generate_chart('scatter', df_assets, x_col=x, y_col=y, color_col=color, title=title)
+                # Debug: show the raw AI response
+                with st.expander("Debug: Raw AI response"):
+                    st.code(answer)
+
+                # Look for a line starting with "CHART:"
+                chart_line = None
+                for line in answer.split('\n'):
+                    if line.strip().upper().startswith('CHART:'):
+                        chart_line = line.strip()
+                        break
+
+                if chart_line:
+                    # Remove "CHART:" and split by '|'
+                    parts = chart_line[6:].split('|')
+                    if len(parts) >= 2:
+                        chart_type = parts[0].strip().lower()
+                        # For heatmap we need special handling
+                        if chart_type == 'heatmap' and len(parts) >= 4:
+                            x_axis = parts[1].strip() if len(parts) > 1 else None
+                            y_axis = parts[2].strip() if len(parts) > 2 else None
+                            z_axis = parts[3].strip() if len(parts) > 3 else None
+                            title = parts[4].strip() if len(parts) > 4 else None
+                            try:
+                                fig = generate_chart('heatmap', df_assets, x_col=x_axis, y_col=y_axis, z_col=z_axis, title=title)
+                            except Exception as e:
+                                st.error(f"Heatmap generation failed: {e}")
+                                fig = None
                         else:
-                            st.error(f"Unknown chart type: {chart_type}")
-                            fig = None
+                            # General case: bar, pie, line, scatter
+                            x_axis = parts[1].strip() if len(parts) > 1 else None
+                            y_axis = parts[2].strip() if len(parts) > 2 and parts[2].strip() else None
+                            title = parts[3].strip() if len(parts) > 3 else None
+
+                            try:
+                                if chart_type == 'bar':
+                                    fig = generate_chart('bar', df_assets, x=x_axis, y=y_axis, title=title)
+                                elif chart_type == 'pie':
+                                    fig = generate_chart('pie', df_assets, names_col=x_axis, values_col=y_axis, title=title)
+                                elif chart_type == 'line':
+                                    fig = generate_chart('line', df_assets, x_col=x_axis, y_col=y_axis, title=title)
+                                elif chart_type == 'scatter':
+                                    fig = generate_chart('scatter', df_assets, x_col=x_axis, y_col=y_axis, color_col=y_axis, title=title)
+                                else:
+                                    st.error(f"Unknown chart type: {chart_type}")
+                                    fig = None
+                            except Exception as e:
+                                st.error(f"Chart generation failed: {e}")
+                                fig = None
 
                         if fig:
                             st.plotly_chart(fig, use_container_width=True)
                         else:
                             st.write(answer)
-                    except Exception as e:
-                        st.error(f"Failed to generate chart: {e}")
+                    else:
                         st.write(answer)
                 else:
                     st.markdown("**AI Response:**")
