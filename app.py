@@ -8,7 +8,7 @@ import utils
 from pcap_analyzer import analyze_pcap
 from asset_classifier import classify_asset
 from vulnerability import fetch_nvd, fetch_epss, fetch_kev_status
-from vulnerability_enrichment import enrich_assets_with_vulnerabilities
+from vulnerability_enrichment import enrich_assets_with_vulnerabilities, fetch_cves_by_keyword
 from chatbot import ask_ai
 
 load_dotenv()
@@ -37,6 +37,8 @@ if 'assets_df' not in st.session_state:
     st.session_state.assets_df = None
 if 'cve_data' not in st.session_state:
     st.session_state.cve_data = {}
+if 'keyword_cves' not in st.session_state:
+    st.session_state.keyword_cves = {}
 if 'analysis_complete' not in st.session_state:
     st.session_state.analysis_complete = False
 
@@ -56,7 +58,6 @@ if uploaded_file and not st.session_state.analysis_complete:
             classified.append(classify_asset(data, groq_api_key))
 
     st.session_state.assets_df = pd.DataFrame(classified)
-    # Display columns (order matters)
     cols = [
         "ip", "asset_type", "confidence", "vendor", "ports", "hostnames",
         "ot_protocols", "os", "firmware_version", "model_number",
@@ -68,11 +69,10 @@ if uploaded_file and not st.session_state.analysis_complete:
     os.unlink(tmp_path)
     st.rerun()
 
-# Display results if analysis complete
 if st.session_state.analysis_complete:
     df_assets = st.session_state.assets_df
 
-    # Vulnerability enrichment
+    # Vulnerability enrichment (per asset)
     if nvd_api_key and "vulnerabilities" not in df_assets.columns:
         with st.spinner("Enriching assets with vulnerability data (this may take a moment)..."):
             df_assets = enrich_assets_with_vulnerabilities(df_assets, nvd_api_key)
@@ -89,10 +89,12 @@ if st.session_state.analysis_complete:
     st.subheader("📡 All Detected Assets")
     st.dataframe(df_assets, use_container_width=True)
 
-    # Vulnerability lookup (optional)
-    if nvd_api_key:
-        st.subheader("🔍 Vulnerability Lookup")
-        cve_input = st.text_input("Enter a CVE ID to fetch details (e.g., CVE-2021-44228):")
+    # Vulnerability lookup section – tabs
+    tab1, tab2 = st.tabs(["Search by CVE ID", "Search by Keyword"])
+
+    with tab1:
+        st.markdown("Enter a single CVE ID to fetch its details.")
+        cve_input = st.text_input("CVE ID (e.g., CVE-2021-44228):")
         if cve_input and re.match(r'CVE-\d{4}-\d{4,7}', cve_input, re.IGNORECASE):
             with st.spinner(f"Fetching data for {cve_input}..."):
                 cve_data = fetch_nvd(cve_input, nvd_api_key)
@@ -108,6 +110,23 @@ if st.session_state.analysis_complete:
             st.write(f"**Description:** {info['description']}")
             st.write(f"**EPSS Score:** {info['epss']}")
             st.write(f"**KEV (Known Exploited):** {'Yes' if info['kev'] else 'No'}")
+
+    with tab2:
+        st.markdown("Enter a keyword (e.g., product name, vendor) to get a list of recent CVEs.")
+        keyword_input = st.text_input("Keyword (e.g., Apache, Windows 10, Modbus):")
+        if st.button("Search CVEs by Keyword") and keyword_input and nvd_api_key:
+            with st.spinner(f"Searching NVD for '{keyword_input}'..."):
+                results = fetch_cves_by_keyword(keyword_input, nvd_api_key, limit=15)
+                if results:
+                    st.session_state.keyword_cves[keyword_input] = results
+                    df_keyword = pd.DataFrame(results)
+                    df_keyword = df_keyword[["cve_id", "epss", "kev", "description"]]
+                    st.dataframe(df_keyword, use_container_width=True)
+                else:
+                    st.warning("No CVEs found for that keyword.")
+        if keyword_input in st.session_state.keyword_cves and st.button("Clear Keyword Results"):
+            del st.session_state.keyword_cves[keyword_input]
+            st.rerun()
 
     # AI Assistant (Groq)
     if groq_api_key:
@@ -127,14 +146,20 @@ if st.session_state.analysis_complete:
         context = "PCAP Analysis Results:\n" + "\n".join(asset_summary)
 
         if st.session_state.cve_data:
-            context += "\n\nKnown Vulnerability Data (fetched by user):\n"
+            context += "\n\nManually fetched CVE details:\n"
             for cve, info in st.session_state.cve_data.items():
                 context += f"- {cve}: EPSS={info['epss']}, KEV={info['kev']}, Desc={info['description'][:100]}...\n"
+
+        if st.session_state.keyword_cves:
+            context += "\n\nKeyword Search Results (from NVD):\n"
+            for keyword, cves in st.session_state.keyword_cves.items():
+                context += f"\n**Keyword: {keyword}**\n"
+                for cve in cves[:10]:
+                    context += f"- {cve['cve_id']}: EPSS={cve['epss']}, KEV={cve['kev']}, Desc={cve['description'][:100]}...\n"
 
         user_question = st.text_area("Ask a question (e.g., 'What assets are web servers?' or 'Show me all CVEs with EPSS > 0.5')")
         if st.button("Ask AI") and user_question:
             with st.spinner("Thinking..."):
-                # Auto‑fetch CVEs mentioned in the question
                 cve_matches = re.findall(r'CVE-\d{4}-\d{4,7}', user_question, re.IGNORECASE)
                 if cve_matches and nvd_api_key:
                     for cve in cve_matches:
@@ -151,7 +176,6 @@ if st.session_state.analysis_complete:
                         info = st.session_state.cve_data[cve]
                         context += f"\n- {cve}: EPSS={info['epss']}, KEV={info['kev']}, Desc={info['description'][:100]}..."
 
-                # Add IP context if mentioned
                 ip_matches = re.findall(r'\b(?:\d{1,3}\.){3}\d{1,3}\b', user_question)
                 if ip_matches:
                     ip_context = []
