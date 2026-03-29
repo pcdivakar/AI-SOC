@@ -67,14 +67,22 @@ def prepare_chart_data(df, *cols):
     return data
 
 def map_column(label, df_columns):
-    if not label:
+    """Map a human-friendly label to an actual DataFrame column name, with robust handling."""
+    if not label or not isinstance(label, str):
         return None
+    # Clean the label
     label_clean = label.lower().replace(' ', '_').replace('-', '_')
+    # If the label contains commas, it's likely a list – not a column name
+    if ',' in label_clean:
+        return None
+    # Direct match
     if label_clean in df_columns:
         return label_clean
+    # Try substring match
     for col in df_columns:
         if label_clean in col or col in label_clean:
             return col
+    # Special cases
     special = {
         'ip_address': 'ip', 'ipaddr': 'ip', 'ip': 'ip',
         'asset_type': 'asset_type', 'assettype': 'asset_type',
@@ -227,8 +235,10 @@ def render_chart(spec, df):
             if len(params) >= 1:
                 path_str = params[0].strip()
                 path = [map_column(p.strip(), df.columns) for p in path_str.split(',') if p.strip()]
-                if None in path:
-                    raise ValueError("One or more path columns not found.")
+                # Remove None entries
+                path = [p for p in path if p is not None]
+                if not path:
+                    raise ValueError("No valid path columns found.")
                 values = map_column(params[1].strip(), df.columns) if len(params) > 1 else None
                 title = params[2].strip() if len(params) > 2 else None
                 data = prepare_chart_data(df, *path, values)
@@ -239,8 +249,9 @@ def render_chart(spec, df):
             if len(params) >= 1:
                 path_str = params[0].strip()
                 path = [map_column(p.strip(), df.columns) for p in path_str.split(',') if p.strip()]
-                if None in path:
-                    raise ValueError("One or more path columns not found.")
+                path = [p for p in path if p is not None]
+                if not path:
+                    raise ValueError("No valid path columns found.")
                 values = map_column(params[1].strip(), df.columns) if len(params) > 1 else None
                 title = params[2].strip() if len(params) > 2 else None
                 data = prepare_chart_data(df, *path, values)
@@ -340,63 +351,16 @@ if st.session_state.analysis_complete:
         st.dataframe(df_assets, use_container_width=True)
 
     with tab_vuln:
-        # Existing two‑column layout
-        col1, col2 = st.columns(2)
-        with col1:
-            st.markdown("#### Search by CVE ID")
-            cve_input = st.text_input("CVE ID (e.g., CVE-2021-44228):")
-            if cve_input and re.match(r'CVE-\d{4}-\d{4,7}', cve_input, re.IGNORECASE):
-                with st.spinner(f"Fetching data for {cve_input}..."):
-                    cve_data = fetch_nvd(cve_input, nvd_api_key)
-                    epss = fetch_epss(cve_input)
-                    kev = fetch_kev_status(cve_input)
-                    if cve_data:
-                        description = cve_data.get("descriptions", [{}])[0].get("value", "N/A")
-                        st.session_state.cve_data[cve_input] = {
-                            "description": description,
-                            "epss": epss if epss is not None else "N/A",
-                            "kev": kev
-                        }
-                        st.success(f"Fetched data for {cve_input}")
-                        st.write(f"**CVE:** {cve_input}")
-                        st.write(f"**Description:** {description}")
-                        st.write(f"**EPSS Score:** {st.session_state.cve_data[cve_input]['epss']}")
-                        st.write(f"**KEV (Known Exploited):** {'Yes' if st.session_state.cve_data[cve_input]['kev'] else 'No'}")
-                    else:
-                        st.error(f"Could not retrieve data for {cve_input}. Please check the CVE ID and try again.")
-        with col2:
-            st.markdown("#### Search by Keyword")
-            keyword_input = st.text_input("Keyword (e.g., Apache, Windows 10, Modbus):")
-            if st.button("Search CVEs by Keyword") and keyword_input:
-                if not nvd_api_key:
-                    st.info("No API key – using public endpoint. Searches may be slow; please wait.")
-                with st.spinner(f"Searching NVD for '{keyword_input}'..."):
-                    results = fetch_cves_by_keyword(keyword_input, nvd_api_key, limit=15)
-                    if results:
-                        st.session_state.keyword_cves[keyword_input] = results
-                        df_keyword = pd.DataFrame(results)
-                        display_cols = ["cve_id", "published", "epss", "kev", "description"]
-                        df_keyword = df_keyword[display_cols]
-                        st.dataframe(df_keyword, use_container_width=True)
-                        st.success(f"Found {len(results)} CVEs")
-                    else:
-                        st.warning(f"No CVEs found for keyword '{keyword_input}'. Try a different term.")
-            if keyword_input in st.session_state.keyword_cves and st.button("Clear Keyword Results"):
-                del st.session_state.keyword_cves[keyword_input]
-                st.rerun()
+        # Load and embed the interactive CVE dashboard (full screen)
+        html_path = os.path.join(os.path.dirname(__file__), "cve_dashboard.html")
+        if os.path.exists(html_path):
+            with open(html_path, "r", encoding="utf-8") as f:
+                html_content = f.read()
+            st.components.v1.html(html_content, height=1000, scrolling=True)
+        else:
+            st.warning("Dashboard HTML file not found. Please add 'cve_dashboard.html' to the app directory.")
 
-        # New: Interactive CVE Dashboard (HTML) - loaded from external file
-        with st.expander("📊 Interactive CVE Dashboard (HTML)", expanded=False):
-            import os
-            html_path = os.path.join(os.path.dirname(__file__), "cve_dashboard.html")
-            if os.path.exists(html_path):
-                with open(html_path, "r", encoding="utf-8") as f:
-                    html_content = f.read()
-                st.components.v1.html(html_content, height=900, scrolling=True)
-            else:
-                st.warning("Dashboard HTML file not found. Please add 'cve_dashboard.html' to the app directory.")
-
-    # AI Assistant (chat interface) – unchanged
+    # AI Assistant (chat interface)
     if groq_api_key:
         st.markdown("---")
         st.subheader("🤖 AI Assistant (Powered by Groq)")
