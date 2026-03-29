@@ -15,7 +15,11 @@ def classify_asset(ip_data, groq_api_key=None):
     dns_queries = ip_data["dns_queries"]
     snmp_communities = ip_data["snmp_communities"]
     cves = ip_data.get("cves", [])
+    firmware_version = ip_data.get("firmware_version", "Unknown")
+    model_number = ip_data.get("model_number", "Unknown")
+    os_combined = ip_data.get("os_combined", "Unknown")
 
+    # Vendor from MAC OUI
     vendor = "Unknown"
     for mac in macs:
         vendor = lookup_vendor(mac)
@@ -24,6 +28,7 @@ def classify_asset(ip_data, groq_api_key=None):
     if ot_vendors:
         vendor = ", ".join(ot_vendors)
 
+    # Asset type
     if ot_asset_types:
         asset_type = " / ".join(ot_asset_types)
         confidence = "high (OT protocol)"
@@ -58,7 +63,10 @@ def classify_asset(ip_data, groq_api_key=None):
         "http_user_agents": http_user_agents,
         "dns_queries": dns_queries,
         "snmp_communities": snmp_communities,
-        "cves": cves
+        "cves": cves,
+        "os": os_combined,
+        "firmware_version": firmware_version,
+        "model_number": model_number
     }
 
 def ai_classify_groq(ip, ports, hostnames, ua, dns, snmp, macs, groq_api_key):
