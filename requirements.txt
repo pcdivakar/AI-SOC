@@ -9,3 +9,4 @@ torch
 transformers
 openpyxl
 huggingface_hub
+google-generativeai
