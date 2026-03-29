@@ -63,17 +63,14 @@ def prepare_chart_data(df, *cols):
 
 # Helper: map human-friendly labels to actual column names
 def map_column(label, df_columns):
-    """
-    Map a human-friendly label to an actual DataFrame column name.
-    Uses case-insensitive matching, strips spaces, and tries underscores.
-    """
+    """Map a human-friendly label to an actual DataFrame column name."""
     if not label:
         return None
     label_clean = label.lower().replace(' ', '_').replace('-', '_')
     # Direct match
     if label_clean in df_columns:
         return label_clean
-    # Try to match by substring
+    # Try substring match
     for col in df_columns:
         if label_clean in col or col in label_clean:
             return col
@@ -106,6 +103,10 @@ def map_column(label, df_columns):
         'model_number': 'model_number',
         'model': 'model_number',
         'confidence': 'confidence',
+        'location': None,  # no direct column
+        'country': None,
+        'city': None,
+        'geographic': None,
     }
     if label_clean in special:
         return special[label_clean]
@@ -166,7 +167,6 @@ def render_chart(spec, df):
                     if y_col and data[y_col].dtype in ['int64', 'float64']:
                         fig = generate_chart('pie', data, names_col=x_col, values_col=y_col, title=title)
                     else:
-                        # treat as counts
                         counts = data[x_col].value_counts().reset_index()
                         counts.columns = [x_col, 'count']
                         fig = generate_chart('pie', counts, names_col=x_col, values_col='count', title=title)
@@ -279,7 +279,6 @@ def render_chart(spec, df):
                 if None in (lat_col, lon_col):
                     # Try to use IP geolocation if not found
                     if 'ip' in df.columns and (lat_col is None or lon_col is None):
-                        # Use random coordinates for demo (replace with real geolocation if desired)
                         df_temp = df.copy()
                         df_temp['lat'] = df_temp['ip'].apply(lambda x: random.uniform(-90, 90))
                         df_temp['lon'] = df_temp['ip'].apply(lambda x: random.uniform(-180, 180))
@@ -298,17 +297,9 @@ def render_chart(spec, df):
                 return fig
 
         elif chart_type == 'choropleth':
-            if len(params) >= 3:
-                locations = map_column(params[0].strip(), df.columns)
-                locationmode = params[1].strip()
-                color_col = map_column(params[2].strip(), df.columns)
-                if None in (locations, color_col):
-                    raise ValueError("Location or color column not found.")
-                title = params[3].strip() if len(params) > 3 else None
-                data = prepare_chart_data(df, locations, color_col)
-                fig = generate_chart('choropleth', data, locations=locations, locationmode=locationmode,
-                                     color_col=color_col, title=title)
-                return fig
+            # Choropleth maps require location codes (e.g., country codes). Our data likely doesn't have them.
+            # Instead, we'll skip this chart and inform the user.
+            raise ValueError("Choropleth maps require geographic location codes (e.g., country names or codes). The current data does not contain such columns. Try using a scatter_map for IP-based locations.")
 
         else:
             return None
@@ -417,10 +408,8 @@ if st.session_state.analysis_complete:
         if st.session_state.dashboard_definition:
             dash = st.session_state.dashboard_definition
             st.header(f"📊 {dash['title']}")
-            # Show logo if available
             if logo_url:
                 st.image(logo_url, width=200)
-            # Render charts in a responsive grid (2 columns)
             cols = st.columns(2)
             for i, chart_spec in enumerate(dash['charts']):
                 with cols[i % 2]:
