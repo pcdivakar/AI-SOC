@@ -8,3 +8,4 @@ plotly
 torch
 transformers
 openpyxl
+huggingface_hub
