@@ -11,7 +11,6 @@ from vulnerability import fetch_nvd, fetch_epss, fetch_kev_status
 from vulnerability_enrichment import enrich_assets_with_vulnerabilities, fetch_cves_by_keyword
 from chatbot import ask_ai
 from chart_generator import generate_chart
-import plotly.graph_objects as go
 
 load_dotenv()
 utils.init_db()
@@ -216,8 +215,8 @@ if st.session_state.analysis_complete:
                     parts = chart_line[6:].split('|')
                     if len(parts) >= 2:
                         chart_type = parts[0].strip().lower()
-                        # For heatmap we need special handling
                         if chart_type == 'heatmap' and len(parts) >= 4:
+                            # Format: CHART: heatmap|x|y|z|title
                             x_axis = parts[1].strip() if len(parts) > 1 else None
                             y_axis = parts[2].strip() if len(parts) > 2 else None
                             z_axis = parts[3].strip() if len(parts) > 3 else None
@@ -235,7 +234,7 @@ if st.session_state.analysis_complete:
 
                             try:
                                 if chart_type == 'bar':
-                                    fig = generate_chart('bar', df_assets, x=x_axis, y=y_axis, title=title)
+                                    fig = generate_chart('bar', df_assets, x_col=x_axis, y_col=y_axis, title=title)
                                 elif chart_type == 'pie':
                                     fig = generate_chart('pie', df_assets, names_col=x_axis, values_col=y_axis, title=title)
                                 elif chart_type == 'line':
