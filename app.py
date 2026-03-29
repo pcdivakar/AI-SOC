@@ -8,6 +8,7 @@ import utils
 from pcap_analyzer import analyze_pcap
 from asset_classifier import classify_asset
 from vulnerability import fetch_nvd, fetch_epss, fetch_kev_status
+from vulnerability_enrichment import enrich_assets_with_vulnerabilities
 from chatbot import ask_ai
 
 load_dotenv()
@@ -62,6 +63,12 @@ if uploaded_file and not st.session_state.analysis_complete:
 if st.session_state.analysis_complete:
     df_assets = st.session_state.assets_df
 
+    # Vulnerability enrichment
+    if nvd_api_key and "vulnerabilities" not in df_assets.columns:
+        with st.spinner("Enriching assets with vulnerability data (this may take a moment)..."):
+            df_assets = enrich_assets_with_vulnerabilities(df_assets, nvd_api_key)
+            st.session_state.assets_df = df_assets
+
     st.subheader("🏭 OT/ICS Assets")
     ot_mask = df_assets["ot_protocols"].apply(lambda x: len(x) > 0)
     ot_assets = df_assets[ot_mask]
@@ -98,7 +105,10 @@ if st.session_state.analysis_complete:
 
         asset_summary = []
         for _, row in df_assets.iterrows():
-            asset_summary.append(f"- {row['ip']}: {row['asset_type']} (ports: {', '.join(map(str, row['ports']))}, vendor: {row['vendor']})")
+            vuln_text = ""
+            if "vulnerabilities" in row and row["vulnerabilities"]:
+                vuln_text = " ; Vulnerabilities: " + ", ".join([f"{v['cve_id']} (EPSS={v['epss']}, KEV={v['kev']})" for v in row["vulnerabilities"]])
+            asset_summary.append(f"- {row['ip']}: {row['asset_type']} (ports: {', '.join(map(str, row['ports']))}, vendor: {row['vendor']}){vuln_text}")
         context = "PCAP Analysis Results:\n" + "\n".join(asset_summary)
 
         if st.session_state.cve_data:
