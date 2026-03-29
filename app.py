@@ -57,6 +57,8 @@ if 'analysis_complete' not in st.session_state:
     st.session_state.analysis_complete = False
 if 'dashboard_definition' not in st.session_state:
     st.session_state.dashboard_definition = None  # {title: str, charts: list}
+if 'protocol_counts' not in st.session_state:
+    st.session_state.protocol_counts = {}  # protocol -> count
 
 # ------------------ Helper functions ------------------
 def prepare_chart_data(df, *cols):
@@ -67,10 +69,9 @@ def prepare_chart_data(df, *cols):
     return data
 
 def map_column(label, df_columns):
-    """Map a human-friendly label to an actual DataFrame column name, with robust handling."""
+    """Map a human-friendly label to an actual DataFrame column name."""
     if not label or not isinstance(label, str):
         return None
-    # Clean the label
     label_clean = label.lower().replace(' ', '_').replace('-', '_')
     # If the label contains commas, it's likely a list – not a column name
     if ',' in label_clean:
@@ -90,7 +91,7 @@ def map_column(label, df_columns):
         'os': 'os', 'operating_system': 'os',
         'cves': 'cves', 'cve': 'cves',
         'hostnames': 'hostnames', 'hostname': 'hostnames',
-        'ot_protocols': 'ot_protocols', 'protocol': 'ot_protocols',
+        'ot_protocols': 'ot_protocols', 'protocol': 'ot_protocols', 'protocols': 'ot_protocols',
         'http_user_agents': 'http_user_agents', 'user_agent': 'http_user_agents',
         'dns_queries': 'dns_queries', 'dns': 'dns_queries',
         'snmp_communities': 'snmp_communities', 'snmp': 'snmp_communities',
@@ -114,10 +115,26 @@ def parse_chart_spec(spec_str):
         chart_type = 'scatter_map'
     return {'type': chart_type, 'params': parts[1:]}
 
-def render_chart(spec, df):
+def render_chart(spec, df, protocol_counts=None):
     chart_type = spec['type']
     params = spec['params']
     try:
+        # Special handling for protocol distribution charts (not in asset DF)
+        if chart_type in ['bar', 'pie'] and params and ('protocol' in params[0].lower() or 'distribution' in params[0].lower()):
+            if protocol_counts and len(protocol_counts) > 0:
+                # Create a DataFrame from protocol_counts
+                proto_df = pd.DataFrame(list(protocol_counts.items()), columns=['Protocol', 'Count'])
+                title = params[2].strip() if len(params) > 2 else 'Protocol Distribution'
+                if chart_type == 'bar':
+                    fig = generate_chart('bar', proto_df, x_col='Protocol', y_col='Count', title=title)
+                else:
+                    fig = generate_chart('pie', proto_df, names_col='Protocol', values_col='Count', title=title)
+                return fig
+            else:
+                st.warning("No protocol data available for this chart.")
+                return None
+
+        # Otherwise, use the asset DataFrame
         use_count = False
         y_param = None
         if len(params) >= 2:
@@ -235,7 +252,6 @@ def render_chart(spec, df):
             if len(params) >= 1:
                 path_str = params[0].strip()
                 path = [map_column(p.strip(), df.columns) for p in path_str.split(',') if p.strip()]
-                # Remove None entries
                 path = [p for p in path if p is not None]
                 if not path:
                     raise ValueError("No valid path columns found.")
@@ -322,6 +338,13 @@ if uploaded_file and not st.session_state.analysis_complete:
     ]
     st.session_state.assets_df = st.session_state.assets_df[cols]
 
+    # Compute protocol counts from the original IP data (for charting)
+    protocol_counts = {}
+    for ip, data in ip_data.items():
+        for proto in data["ot_protocols"]:
+            protocol_counts[proto] = protocol_counts.get(proto, 0) + 1
+    st.session_state.protocol_counts = protocol_counts
+
     st.session_state.analysis_complete = True
     os.unlink(tmp_path)
     st.rerun()
@@ -366,7 +389,7 @@ if st.session_state.analysis_complete:
         st.subheader("🤖 AI Assistant (Powered by Groq)")
         st.markdown("Ask about the assets, vulnerabilities, or request a single chart or a full dashboard.")
 
-        # Build context
+        # Build rich context including protocol counts and asset details
         asset_summary = []
         for _, row in df_assets.iterrows():
             vuln_text = ""
@@ -378,6 +401,14 @@ if st.session_state.analysis_complete:
             )
         context = "PCAP Analysis Results:\n" + "\n".join(asset_summary)
 
+        # Add protocol distribution
+        if st.session_state.protocol_counts:
+            proto_text = "\n\nProtocol Distribution (packet count per detected OT protocol):\n"
+            for proto, count in st.session_state.protocol_counts.items():
+                proto_text += f"- {proto}: {count} packets\n"
+            context += proto_text
+
+        # Add manually fetched CVE details
         if st.session_state.cve_data:
             context += "\n\nManually fetched CVE details:\n"
             for cve, info in st.session_state.cve_data.items():
@@ -390,7 +421,7 @@ if st.session_state.analysis_complete:
                 for cve in cves[:10]:
                     context += f"- {cve['cve_id']}: EPSS={cve['epss']}, KEV={cve['kev']}, Desc={cve['description'][:100]}...\n"
 
-        user_question = st.text_area("Ask a question, request a chart, or ask for a dashboard (e.g., 'Create a security dashboard')")
+        user_question = st.text_area("Ask a question, request a chart, or ask for a dashboard (e.g., 'Show me protocol distribution')")
         if st.button("Ask AI") and user_question:
             with st.spinner("Thinking..."):
                 # Auto‑fetch CVEs mentioned in the question
@@ -455,7 +486,7 @@ if st.session_state.analysis_complete:
                         spec_str = chart_line[6:].strip()
                         chart_spec = parse_chart_spec(spec_str)
                         if chart_spec:
-                            fig = render_chart(chart_spec, df_assets)
+                            fig = render_chart(chart_spec, df_assets, st.session_state.protocol_counts)
                             if fig:
                                 st.plotly_chart(fig, use_container_width=True)
                             else:
@@ -490,7 +521,7 @@ if st.session_state.analysis_complete:
                 rendered_count = 0
                 for i, chart_spec in enumerate(dash['charts']):
                     with cols[i % 2]:
-                        fig = render_chart(chart_spec, df_assets)
+                        fig = render_chart(chart_spec, df_assets, st.session_state.protocol_counts)
                         if fig:
                             st.plotly_chart(fig, use_container_width=True)
                             rendered_count += 1
