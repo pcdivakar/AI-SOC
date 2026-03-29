@@ -7,3 +7,4 @@ groq
 plotly
 torch
 transformers
+openpyxl
