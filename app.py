@@ -100,16 +100,20 @@ if st.session_state.analysis_complete:
                 cve_data = fetch_nvd(cve_input, nvd_api_key)
                 epss = fetch_epss(cve_input)
                 kev = fetch_kev_status(cve_input)
-                st.session_state.cve_data[cve_input] = {
-                    "description": cve_data.get("descriptions", [{}])[0].get("value", "N/A") if cve_data else "N/A",
-                    "epss": epss if epss is not None else "N/A",
-                    "kev": kev
-                }
-            info = st.session_state.cve_data[cve_input]
-            st.write(f"**CVE:** {cve_input}")
-            st.write(f"**Description:** {info['description']}")
-            st.write(f"**EPSS Score:** {info['epss']}")
-            st.write(f"**KEV (Known Exploited):** {'Yes' if info['kev'] else 'No'}")
+                if cve_data:
+                    description = cve_data.get("descriptions", [{}])[0].get("value", "N/A")
+                    st.session_state.cve_data[cve_input] = {
+                        "description": description,
+                        "epss": epss if epss is not None else "N/A",
+                        "kev": kev
+                    }
+                    st.success(f"Fetched data for {cve_input}")
+                    st.write(f"**CVE:** {cve_input}")
+                    st.write(f"**Description:** {description}")
+                    st.write(f"**EPSS Score:** {st.session_state.cve_data[cve_input]['epss']}")
+                    st.write(f"**KEV (Known Exploited):** {'Yes' if st.session_state.cve_data[cve_input]['kev'] else 'No'}")
+                else:
+                    st.error(f"Could not retrieve data for {cve_input}. Please check the CVE ID and try again.")
 
     with tab2:
         st.markdown("Enter a keyword (e.g., product name, vendor) to get a list of recent CVEs.")
@@ -120,10 +124,16 @@ if st.session_state.analysis_complete:
                 if results:
                     st.session_state.keyword_cves[keyword_input] = results
                     df_keyword = pd.DataFrame(results)
-                    df_keyword = df_keyword[["cve_id", "epss", "kev", "description"]]
+                    # Show selected columns
+                    display_cols = ["cve_id", "published", "epss", "kev", "description"]
+                    df_keyword = df_keyword[display_cols]
                     st.dataframe(df_keyword, use_container_width=True)
+                    st.success(f"Found {len(results)} CVEs")
                 else:
-                    st.warning("No CVEs found for that keyword.")
+                    st.warning(f"No CVEs found for keyword '{keyword_input}'. Try a different term.")
+        elif keyword_input and not nvd_api_key:
+            st.warning("NVD API key not set. Keyword search may fail or be rate-limited.")
+
         if keyword_input in st.session_state.keyword_cves and st.button("Clear Keyword Results"):
             del st.session_state.keyword_cves[keyword_input]
             st.rerun()
@@ -160,6 +170,7 @@ if st.session_state.analysis_complete:
         user_question = st.text_area("Ask a question (e.g., 'What assets are web servers?' or 'Show me all CVEs with EPSS > 0.5')")
         if st.button("Ask AI") and user_question:
             with st.spinner("Thinking..."):
+                # Auto‑fetch CVEs mentioned in the question
                 cve_matches = re.findall(r'CVE-\d{4}-\d{4,7}', user_question, re.IGNORECASE)
                 if cve_matches and nvd_api_key:
                     for cve in cve_matches:
