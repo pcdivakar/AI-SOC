@@ -2,7 +2,6 @@ import re
 from scapy.all import rdpcap, IP, TCP, UDP, Ether, Raw, ARP, DNS
 from collections import defaultdict
 
-# OT Protocol Signatures (port + payload start)
 OT_PROTOCOLS = {
     "Modbus": {"ports": [502], "signatures": [b'\x00\x00\x00\x00\x00\x06', b'\x00\x01\x00\x00\x00\x06'], "asset_type": "PLC/RTU", "vendor": None},
     "Siemens S7": {"ports": [102], "signatures": [b'\x03\x00\x00', b'\x32\x01\x00'], "asset_type": "Siemens PLC", "vendor": "Siemens"},
@@ -66,7 +65,6 @@ def analyze_pcap(pcap_path, max_packets=10000):
         "cves": set()
     })
 
-    # Build IP-MAC mapping
     ip_mac = {}
     for pkt in packets:
         if ARP in pkt and pkt[ARP].op == 2:
@@ -106,26 +104,21 @@ def analyze_pcap(pcap_path, max_packets=10000):
 
         if Raw in pkt:
             payload = bytes(pkt[Raw].load)
-            # HTTP Host
             host_match = re.search(rb'Host:\s*([^\r\n]+)', payload, re.IGNORECASE)
             if host_match:
                 ip_data[dst_ip]["hostnames"].add(host_match.group(1).decode(errors='ignore'))
-            # HTTP User-Agent
             ua_match = re.search(rb'User-Agent:\s*([^\r\n]+)', payload, re.IGNORECASE)
             if ua_match:
                 ip_data[src_ip]["http_user_agents"].add(ua_match.group(1).decode(errors='ignore'))
-            # TLS SNI (simplified)
             if TCP in pkt and pkt.dport == 443 and payload.startswith(b'\x16'):
                 sni_match = re.search(rb'\x00\x00\x00([^\x00]+)', payload)
                 if sni_match:
                     ip_data[dst_ip]["hostnames"].add(sni_match.group(1).decode(errors='ignore'))
-            # SNMP community
             if UDP in pkt and pkt.dport == 161 and payload.startswith(b'\x30'):
                 parts = payload.split(b'\x04')
                 if len(parts) >= 2:
                     community = parts[1].split(b'\x00')[0].decode(errors='ignore')
                     ip_data[dst_ip]["snmp_communities"].add(community)
-            # CVEs
             payload_str = payload.decode(errors='ignore')
             cve_matches = re.findall(r'CVE-\d{4}-\d{4,7}', payload_str, re.IGNORECASE)
             for cve in cve_matches:
