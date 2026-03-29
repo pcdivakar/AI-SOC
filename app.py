@@ -2,6 +2,7 @@ import streamlit as st
 import os
 import tempfile
 import re
+import random
 import pandas as pd
 from dotenv import load_dotenv
 import utils
@@ -22,7 +23,14 @@ st.title("🛡️ AI PCAP Analyzer with OT Asset Classification & Vulnerability 
 nvd_api_key = st.secrets.get("NVD_API_KEY", os.getenv("NVD_API_KEY"))
 groq_api_key = st.secrets.get("GROQ_API_KEY", os.getenv("GROQ_API_KEY"))
 
+# Logo URL (optional)
+logo_url = st.secrets.get("LOGO_URL", None)
+
 with st.sidebar:
+    if logo_url:
+        st.image(logo_url, width=150)
+    else:
+        st.markdown("## 📊 OT Security Dashboard")
     st.header("Configuration")
     if not nvd_api_key:
         st.warning("Using public NVD endpoint (rate‑limited). For better performance, add a free API key.")
@@ -53,6 +61,56 @@ def prepare_chart_data(df, *cols):
             data[col] = data[col].apply(len)
     return data
 
+# Helper: map human-friendly labels to actual column names
+def map_column(label, df_columns):
+    """
+    Map a human-friendly label to an actual DataFrame column name.
+    Uses case-insensitive matching, strips spaces, and tries underscores.
+    """
+    if not label:
+        return None
+    label_clean = label.lower().replace(' ', '_').replace('-', '_')
+    # Direct match
+    if label_clean in df_columns:
+        return label_clean
+    # Try to match by substring
+    for col in df_columns:
+        if label_clean in col or col in label_clean:
+            return col
+    # Special cases
+    special = {
+        'ip_address': 'ip',
+        'ipaddr': 'ip',
+        'ip': 'ip',
+        'asset_type': 'asset_type',
+        'assettype': 'asset_type',
+        'vendor': 'vendor',
+        'ports': 'ports',
+        'port': 'ports',
+        'os': 'os',
+        'operating_system': 'os',
+        'cves': 'cves',
+        'cve': 'cves',
+        'hostnames': 'hostnames',
+        'hostname': 'hostnames',
+        'ot_protocols': 'ot_protocols',
+        'protocol': 'ot_protocols',
+        'http_user_agents': 'http_user_agents',
+        'user_agent': 'http_user_agents',
+        'dns_queries': 'dns_queries',
+        'dns': 'dns_queries',
+        'snmp_communities': 'snmp_communities',
+        'snmp': 'snmp_communities',
+        'firmware_version': 'firmware_version',
+        'firmware': 'firmware_version',
+        'model_number': 'model_number',
+        'model': 'model_number',
+        'confidence': 'confidence',
+    }
+    if label_clean in special:
+        return special[label_clean]
+    return None
+
 # Helper: parse a single chart string (e.g., "bar|asset_type||Asset Types")
 def parse_chart_spec(spec_str):
     parts = spec_str.split('|')
@@ -71,116 +129,190 @@ def render_chart(spec, df):
     chart_type = spec['type']
     params = spec['params']
     try:
-        if chart_type == 'heatmap':
+        # Determine if we should use counts (value_counts) for bar/pie
+        use_count = False
+        y_param = None
+        if len(params) >= 2:
+            y_val = params[1].strip().lower()
+            if y_val in ['count', 'counts', 'number']:
+                use_count = True
+            else:
+                y_param = params[1].strip()
+
+        # Map column names
+        if chart_type in ['bar', 'pie', 'line', 'scatter', 'area']:
+            x_col = map_column(params[0].strip(), df.columns)
+            if x_col is None:
+                raise ValueError(f"Column '{params[0]}' not found.")
+            y_col = map_column(y_param, df.columns) if y_param else None
+            title = params[2].strip() if len(params) > 2 else None
+
+            # For bar/pie with no y or y=Count, we do value_counts on x
+            if (chart_type in ['bar', 'pie']) and (y_col is None or use_count):
+                counts = df[x_col].value_counts().reset_index()
+                counts.columns = [x_col, 'count']
+                if chart_type == 'bar':
+                    fig = generate_chart('bar', counts, x_col=x_col, y_col='count', title=title)
+                else:
+                    fig = generate_chart('pie', counts, names_col=x_col, values_col='count', title=title)
+                return fig
+            else:
+                # Normal case with numeric y column
+                data = prepare_chart_data(df, x_col, y_col)
+                if chart_type == 'bar':
+                    fig = generate_chart('bar', data, x_col=x_col, y_col=y_col, title=title)
+                elif chart_type == 'pie':
+                    # For pie, y_col might be numeric; if not, fallback to counts
+                    if y_col and data[y_col].dtype in ['int64', 'float64']:
+                        fig = generate_chart('pie', data, names_col=x_col, values_col=y_col, title=title)
+                    else:
+                        # treat as counts
+                        counts = data[x_col].value_counts().reset_index()
+                        counts.columns = [x_col, 'count']
+                        fig = generate_chart('pie', counts, names_col=x_col, values_col='count', title=title)
+                elif chart_type == 'line':
+                    fig = generate_chart('line', data, x_col=x_col, y_col=y_col, title=title)
+                elif chart_type == 'scatter':
+                    color_col = map_column(params[2].strip(), df.columns) if len(params) > 2 else None
+                    fig = generate_chart('scatter', data, x_col=x_col, y_col=y_col, color_col=color_col, title=title)
+                elif chart_type == 'area':
+                    fig = generate_chart('area', data, x_col=x_col, y_col=y_col, title=title)
+                else:
+                    return None
+                return fig
+
+        elif chart_type == 'histogram':
+            column = map_column(params[0].strip(), df.columns)
+            if column is None:
+                raise ValueError(f"Column '{params[0]}' not found.")
+            bins = int(params[1]) if len(params) > 1 and params[1].strip().isdigit() else 30
+            title = params[2].strip() if len(params) > 2 else None
+            data = prepare_chart_data(df, column)
+            fig = generate_chart('histogram', data, column=column, bins=bins, title=title)
+            return fig
+
+        elif chart_type == 'box':
+            column = map_column(params[0].strip(), df.columns)
+            if column is None:
+                raise ValueError(f"Column '{params[0]}' not found.")
+            group = map_column(params[1].strip(), df.columns) if len(params) > 1 else None
+            title = params[2].strip() if len(params) > 2 else None
+            data = prepare_chart_data(df, column, group)
+            fig = generate_chart('box', data, column=column, group_col=group, title=title)
+            return fig
+
+        elif chart_type == 'violin':
+            column = map_column(params[0].strip(), df.columns)
+            if column is None:
+                raise ValueError(f"Column '{params[0]}' not found.")
+            group = map_column(params[1].strip(), df.columns) if len(params) > 1 else None
+            title = params[2].strip() if len(params) > 2 else None
+            data = prepare_chart_data(df, column, group)
+            fig = generate_chart('violin', data, column=column, group_col=group, title=title)
+            return fig
+
+        elif chart_type == 'heatmap':
             if len(params) >= 3:
-                x_axis, y_axis, z_axis = params[0].strip(), params[1].strip(), params[2].strip()
+                x_axis = map_column(params[0].strip(), df.columns)
+                y_axis = map_column(params[1].strip(), df.columns)
+                z_axis = map_column(params[2].strip(), df.columns)
+                if None in (x_axis, y_axis, z_axis):
+                    raise ValueError("One or more columns not found.")
                 title = params[3].strip() if len(params) > 3 else None
                 data = prepare_chart_data(df, x_axis, y_axis, z_axis)
                 fig = generate_chart('heatmap', data, x_col=x_axis, y_col=y_axis, z_col=z_axis, title=title)
+                return fig
+
         elif chart_type == 'density_heatmap':
             if len(params) >= 2:
-                x_axis, y_axis = params[0].strip(), params[1].strip()
+                x_axis = map_column(params[0].strip(), df.columns)
+                y_axis = map_column(params[1].strip(), df.columns)
+                if None in (x_axis, y_axis):
+                    raise ValueError("One or more columns not found.")
                 title = params[2].strip() if len(params) > 2 else None
                 data = prepare_chart_data(df, x_axis, y_axis)
                 fig = generate_chart('density_heatmap', data, x_col=x_axis, y_col=y_axis, title=title)
+                return fig
+
         elif chart_type == 'bubble':
             if len(params) >= 3:
-                x_axis, y_axis, size_col = params[0].strip(), params[1].strip(), params[2].strip()
-                color_col = params[3].strip() if len(params) > 3 else None
+                x_axis = map_column(params[0].strip(), df.columns)
+                y_axis = map_column(params[1].strip(), df.columns)
+                size_col = map_column(params[2].strip(), df.columns)
+                if None in (x_axis, y_axis, size_col):
+                    raise ValueError("One or more columns not found.")
+                color_col = map_column(params[3].strip(), df.columns) if len(params) > 3 else None
                 title = params[4].strip() if len(params) > 4 else None
                 data = prepare_chart_data(df, x_axis, y_axis, size_col, color_col)
-                fig = generate_chart('bubble', data, x_col=x_axis, y_col=y_axis, size_col=size_col, color_col=color_col, title=title)
+                fig = generate_chart('bubble', data, x_col=x_axis, y_col=y_axis, size_col=size_col,
+                                     color_col=color_col, title=title)
+                return fig
+
         elif chart_type == 'sunburst':
             if len(params) >= 1:
-                path = [p.strip() for p in params[0].split(',') if p.strip()]
-                values = params[1].strip() if len(params) > 1 else None
+                path_str = params[0].strip()
+                path = [map_column(p.strip(), df.columns) for p in path_str.split(',') if p.strip()]
+                if None in path:
+                    raise ValueError("One or more path columns not found.")
+                values = map_column(params[1].strip(), df.columns) if len(params) > 1 else None
                 title = params[2].strip() if len(params) > 2 else None
                 data = prepare_chart_data(df, *path, values)
                 fig = generate_chart('sunburst', data, path=path, values=values, title=title)
+                return fig
+
         elif chart_type == 'treemap':
             if len(params) >= 1:
-                path = [p.strip() for p in params[0].split(',') if p.strip()]
-                values = params[1].strip() if len(params) > 1 else None
+                path_str = params[0].strip()
+                path = [map_column(p.strip(), df.columns) for p in path_str.split(',') if p.strip()]
+                if None in path:
+                    raise ValueError("One or more path columns not found.")
+                values = map_column(params[1].strip(), df.columns) if len(params) > 1 else None
                 title = params[2].strip() if len(params) > 2 else None
                 data = prepare_chart_data(df, *path, values)
                 fig = generate_chart('treemap', data, path=path, values=values, title=title)
+                return fig
+
         elif chart_type == 'scatter_map':
             if len(params) >= 2:
-                lat_col = params[0].strip()
-                lon_col = params[1].strip()
-                color_col = params[2].strip() if len(params) > 2 else None
-                size_col = params[3].strip() if len(params) > 3 else None
+                lat_col = map_column(params[0].strip(), df.columns)
+                lon_col = map_column(params[1].strip(), df.columns)
+                if None in (lat_col, lon_col):
+                    # Try to use IP geolocation if not found
+                    if 'ip' in df.columns and (lat_col is None or lon_col is None):
+                        # Use random coordinates for demo (replace with real geolocation if desired)
+                        df_temp = df.copy()
+                        df_temp['lat'] = df_temp['ip'].apply(lambda x: random.uniform(-90, 90))
+                        df_temp['lon'] = df_temp['ip'].apply(lambda x: random.uniform(-180, 180))
+                        lat_col, lon_col = 'lat', 'lon'
+                        st.info("Using random coordinates for map demonstration. For actual geolocation, integrate an IP geolocation service.")
+                    else:
+                        raise ValueError("Latitude/Longitude columns not found.")
+                else:
+                    df_temp = df
+                color_col = map_column(params[2].strip(), df.columns) if len(params) > 2 else None
+                size_col = map_column(params[3].strip(), df.columns) if len(params) > 3 else None
                 title = params[4].strip() if len(params) > 4 else None
-                # Add dummy coordinates if needed (demo)
-                df_temp = df.copy()
-                if lat_col not in df_temp.columns and 'ip' in df_temp.columns:
-                    import random
-                    df_temp['lat'] = df_temp['ip'].apply(lambda x: random.uniform(-90, 90))
-                    df_temp['lon'] = df_temp['ip'].apply(lambda x: random.uniform(-180, 180))
-                    lat_col = 'lat'
-                    lon_col = 'lon'
-                    st.info("Using random coordinates for map demonstration.")
                 data = prepare_chart_data(df_temp, lat_col, lon_col, color_col, size_col)
                 fig = generate_chart('scatter_map', data, lat_col=lat_col, lon_col=lon_col,
                                      color_col=color_col, size_col=size_col, title=title)
+                return fig
+
         elif chart_type == 'choropleth':
             if len(params) >= 3:
-                locations = params[0].strip()
+                locations = map_column(params[0].strip(), df.columns)
                 locationmode = params[1].strip()
-                color_col = params[2].strip()
+                color_col = map_column(params[2].strip(), df.columns)
+                if None in (locations, color_col):
+                    raise ValueError("Location or color column not found.")
                 title = params[3].strip() if len(params) > 3 else None
                 data = prepare_chart_data(df, locations, color_col)
                 fig = generate_chart('choropleth', data, locations=locations, locationmode=locationmode,
                                      color_col=color_col, title=title)
-        elif chart_type == 'histogram':
-            if len(params) >= 1:
-                column = params[0].strip()
-                bins = int(params[1]) if len(params) > 1 and params[1].strip() else 30
-                title = params[2].strip() if len(params) > 2 else None
-                data = prepare_chart_data(df, column)
-                fig = generate_chart('histogram', data, column=column, bins=bins, title=title)
-        elif chart_type == 'box':
-            if len(params) >= 1:
-                column = params[0].strip()
-                group = params[1].strip() if len(params) > 1 else None
-                title = params[2].strip() if len(params) > 2 else None
-                data = prepare_chart_data(df, column, group)
-                fig = generate_chart('box', data, column=column, group_col=group, title=title)
-        elif chart_type == 'violin':
-            if len(params) >= 1:
-                column = params[0].strip()
-                group = params[1].strip() if len(params) > 1 else None
-                title = params[2].strip() if len(params) > 2 else None
-                data = prepare_chart_data(df, column, group)
-                fig = generate_chart('violin', data, column=column, group_col=group, title=title)
-        elif chart_type == 'area':
-            if len(params) >= 2:
-                x_axis, y_axis = params[0].strip(), params[1].strip()
-                title = params[2].strip() if len(params) > 2 else None
-                data = prepare_chart_data(df, x_axis, y_axis)
-                fig = generate_chart('area', data, x_col=x_axis, y_col=y_axis, title=title)
-        elif chart_type == 'scatter':
-            if len(params) >= 2:
-                x_axis, y_axis = params[0].strip(), params[1].strip()
-                color_col = params[2].strip() if len(params) > 2 else None
-                title = params[3].strip() if len(params) > 3 else None
-                data = prepare_chart_data(df, x_axis, y_axis, color_col)
-                fig = generate_chart('scatter', data, x_col=x_axis, y_col=y_axis, color_col=color_col, title=title)
+                return fig
+
         else:
-            # bar, pie, line
-            x_axis = params[0].strip() if len(params) > 0 else None
-            y_axis = params[1].strip() if len(params) > 1 else None
-            title = params[2].strip() if len(params) > 2 else None
-            data = prepare_chart_data(df, x_axis, y_axis)
-            if chart_type == 'bar':
-                fig = generate_chart('bar', data, x_col=x_axis, y_col=y_axis, title=title)
-            elif chart_type == 'pie':
-                fig = generate_chart('pie', data, names_col=x_axis, values_col=y_axis, title=title)
-            elif chart_type == 'line':
-                fig = generate_chart('line', data, x_col=x_axis, y_col=y_axis, title=title)
-            else:
-                return None
-        return fig
+            return None
+
     except Exception as e:
         st.error(f"Chart generation failed: {e}")
         return None
@@ -282,10 +414,12 @@ if st.session_state.analysis_complete:
                 st.rerun()
 
     with tab_dashboard:
-        st.header("AI‑Generated Dashboard")
         if st.session_state.dashboard_definition:
             dash = st.session_state.dashboard_definition
-            st.subheader(dash['title'])
+            st.header(f"📊 {dash['title']}")
+            # Show logo if available
+            if logo_url:
+                st.image(logo_url, width=200)
             # Render charts in a responsive grid (2 columns)
             cols = st.columns(2)
             for i, chart_spec in enumerate(dash['charts']):
@@ -296,7 +430,7 @@ if st.session_state.analysis_complete:
                     else:
                         st.warning(f"Could not render chart: {chart_spec}")
         else:
-            st.info("No dashboard generated yet. Ask the AI Assistant to create a dashboard.")
+            st.info("No dashboard generated yet. Ask the AI Assistant to create a dashboard (e.g., 'Create a security dashboard with asset types, vendors, and OS distribution').")
 
     # AI Assistant (chat interface)
     if groq_api_key:
@@ -380,7 +514,7 @@ if st.session_state.analysis_complete:
                             'title': title,
                             'charts': dashboard_charts
                         }
-                        st.success("Dashboard created! Switch to the 'AI Dashboard' tab to view it.")
+                        st.success(f"Dashboard '{title}' created! Switch to the 'AI Dashboard' tab to view it.")
                     else:
                         st.write(answer)
                 else:
