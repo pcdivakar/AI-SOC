@@ -1,9 +1,8 @@
 import re
-from scapy.all import rdpcap, IP, TCP, UDP, Ether, Raw, ARP, DNS
-from collections import defaultdict
-from collections import Counter
+from scapy.all import rdpcap, IP, TCP, UDP, Ether, Raw, ARP, DNS, PcapReader
+from collections import defaultdict, Counter
 
-# OT Protocol Signatures (port + payload start)
+# OT Protocol Signatures (same as before)
 OT_PROTOCOLS = {
     "Modbus": {"ports": [502], "signatures": [b'\x00\x00\x00\x00\x00\x06', b'\x00\x01\x00\x00\x00\x06'], "asset_type": "PLC/RTU", "vendor": None},
     "Siemens S7": {"ports": [102], "signatures": [b'\x03\x00\x00', b'\x32\x01\x00'], "asset_type": "Siemens PLC", "vendor": "Siemens"},
@@ -22,7 +21,6 @@ OT_PROTOCOLS = {
     "IEC 61850 SV": {"ports": [], "signatures": [b'\x88\xba'], "asset_type": "Sampled Values", "vendor": None}
 }
 
-# IT Service Ports (for classification)
 IT_SERVICE_PORTS = {
     80: "Web Server (HTTP)", 443: "Web Server (HTTPS)", 22: "SSH Server", 23: "Telnet Server",
     3389: "RDP Server", 3306: "MySQL Database", 5432: "PostgreSQL Database", 1433: "MSSQL Database",
@@ -112,11 +110,11 @@ def guess_os_from_ttl(ttl):
     else:
         return "Unknown"
 
-def analyze_pcap(pcap_path, max_packets=10000):
-    packets = rdpcap(pcap_path)
-    if len(packets) > max_packets:
-        packets = packets[:max_packets]
-
+def analyze_pcap(pcap_path, max_packets=50000):
+    """
+    Stream PCAP file using PcapReader to avoid loading everything into memory.
+    Returns a dictionary of aggregated data per IP.
+    """
     ip_data = defaultdict(lambda: {
         "ip": None,
         "macs": set(),
@@ -136,95 +134,120 @@ def analyze_pcap(pcap_path, max_packets=10000):
         "model_number": None
     })
 
-    # Build IP-MAC mapping
+    # First pass: build IP-MAC mapping (requires full file, but we can do it on the fly)
+    # We'll store mac-ip associations as we see them.
     ip_mac = {}
-    for pkt in packets:
-        if ARP in pkt and pkt[ARP].op == 2:
-            ip_mac[pkt[ARP].psrc] = pkt[ARP].hwsrc
-        elif Ether in pkt and IP in pkt:
-            ip_mac[pkt[IP].src] = pkt[Ether].src
 
-    for pkt in packets:
-        if IP not in pkt:
-            continue
-        src_ip = pkt[IP].src
-        dst_ip = pkt[IP].dst
+    packet_count = 0
+    with PcapReader(pcap_path) as pcap_reader:
+        for pkt in pcap_reader:
+            if packet_count >= max_packets:
+                break
+            packet_count += 1
 
-        for ip in [src_ip, dst_ip]:
-            if ip_data[ip]["ip"] is None:
-                ip_data[ip]["ip"] = ip
-            if ip in ip_mac:
-                ip_data[ip]["macs"].add(ip_mac[ip])
+            # Skip non-IP packets
+            if IP not in pkt:
+                continue
 
-        if TCP in pkt or UDP in pkt:
-            sport = pkt.sport if hasattr(pkt, 'sport') else None
-            dport = pkt.dport if hasattr(pkt, 'dport') else None
-            if sport:
-                ip_data[src_ip]["ports"].add(sport)
-                ip_data[dst_ip]["ports"].add(dport)
-            if dport:
-                ip_data[src_ip]["ports"].add(dport)
-                ip_data[dst_ip]["ports"].add(dport)
+            src_ip = pkt[IP].src
+            dst_ip = pkt[IP].dst
 
-        proto, asset_type, vendor = detect_ot_protocol(pkt)
-        if proto:
-            ip_data[dst_ip]["ot_protocols"].add(proto)
-            if asset_type:
-                ip_data[dst_ip]["ot_asset_types"].add(asset_type)
-            if vendor:
-                ip_data[dst_ip]["ot_vendors"].add(vendor)
+            # Store MAC-IP mapping from Ethernet layer (if available)
+            if Ether in pkt:
+                src_mac = pkt[Ether].src
+                dst_mac = pkt[Ether].dst
+                ip_mac[src_ip] = src_mac
+                ip_mac[dst_ip] = dst_mac
 
-        ttl = pkt[IP].ttl
-        ip_data[src_ip]["ttl_values"].append(ttl)
-        ip_data[dst_ip]["ttl_values"].append(ttl)
+            # Initialize entries
+            for ip in [src_ip, dst_ip]:
+                if ip_data[ip]["ip"] is None:
+                    ip_data[ip]["ip"] = ip
+                if ip in ip_mac:
+                    ip_data[ip]["macs"].add(ip_mac[ip])
 
-        if Raw in pkt:
-            payload = bytes(pkt[Raw].load)
-            host_match = re.search(rb'Host:\s*([^\r\n]+)', payload, re.IGNORECASE)
-            if host_match:
-                ip_data[dst_ip]["hostnames"].add(host_match.group(1).decode(errors='ignore'))
-            ua_match = re.search(rb'User-Agent:\s*([^\r\n]+)', payload, re.IGNORECASE)
-            if ua_match:
-                ua = ua_match.group(1).decode(errors='ignore')
-                ip_data[src_ip]["http_user_agents"].add(ua)
-                if 'Windows' in ua:
-                    ip_data[src_ip]["os_from_ua"] = ua.split('Windows')[1].split(';')[0].strip()
-                elif 'Linux' in ua:
-                    ip_data[src_ip]["os_from_ua"] = 'Linux'
-                elif 'Mac' in ua:
-                    ip_data[src_ip]["os_from_ua"] = 'macOS'
-            if TCP in pkt and pkt.dport == 443 and payload.startswith(b'\x16'):
-                sni_match = re.search(rb'\x00\x00\x00([^\x00]+)', payload)
-                if sni_match:
-                    ip_data[dst_ip]["hostnames"].add(sni_match.group(1).decode(errors='ignore'))
-            if UDP in pkt and pkt.dport == 161 and payload.startswith(b'\x30'):
-                parts = payload.split(b'\x04')
-                if len(parts) >= 2:
-                    community = parts[1].split(b'\x00')[0].decode(errors='ignore')
-                    ip_data[dst_ip]["snmp_communities"].add(community)
-            payload_str = payload.decode(errors='ignore')
-            cve_matches = re.findall(r'CVE-\d{4}-\d{4,7}', payload_str, re.IGNORECASE)
-            for cve in cve_matches:
-                ip_data[dst_ip]["cves"].add(cve.upper())
+            # Ports
+            if TCP in pkt or UDP in pkt:
+                sport = pkt.sport if hasattr(pkt, 'sport') else None
+                dport = pkt.dport if hasattr(pkt, 'dport') else None
+                if sport:
+                    ip_data[src_ip]["ports"].add(sport)
+                    ip_data[dst_ip]["ports"].add(dport)
+                if dport:
+                    ip_data[src_ip]["ports"].add(dport)
+                    ip_data[dst_ip]["ports"].add(dport)
+
+            # OT detection
+            proto, asset_type, vendor = detect_ot_protocol(pkt)
             if proto:
-                metadata = extract_ot_metadata(payload, proto)
-                if 'firmware_version' in metadata:
-                    ip_data[dst_ip]["firmware_version"] = metadata['firmware_version']
-                if 'model_number' in metadata:
-                    ip_data[dst_ip]["model_number"] = metadata['model_number']
-                if 'vendor' in metadata:
-                    ip_data[dst_ip]["ot_vendors"].add(metadata['vendor'])
-            if 445 in [pkt.dport, pkt.sport] and payload.startswith(b'\xff\x53\x4d\x42'):
-                win_ver = detect_windows_version(payload)
-                if win_ver:
-                    ip_data[dst_ip]["os_from_smb"] = win_ver
-                    ip_data[dst_ip]["os_from_ua"] = win_ver
+                ip_data[dst_ip]["ot_protocols"].add(proto)
+                if asset_type:
+                    ip_data[dst_ip]["ot_asset_types"].add(asset_type)
+                if vendor:
+                    ip_data[dst_ip]["ot_vendors"].add(vendor)
 
-        if DNS in pkt and pkt[DNS].qr == 0:
-            for q in pkt[DNS].qd:
-                if q.qname:
-                    ip_data[src_ip]["dns_queries"].add(q.qname.decode(errors='ignore').rstrip('.'))
+            # TTL values for OS guessing
+            ttl = pkt[IP].ttl
+            ip_data[src_ip]["ttl_values"].append(ttl)
+            ip_data[dst_ip]["ttl_values"].append(ttl)
 
+            # Payload extraction
+            if Raw in pkt:
+                payload = bytes(pkt[Raw].load)
+                # HTTP Host
+                host_match = re.search(rb'Host:\s*([^\r\n]+)', payload, re.IGNORECASE)
+                if host_match:
+                    ip_data[dst_ip]["hostnames"].add(host_match.group(1).decode(errors='ignore'))
+                # HTTP User-Agent
+                ua_match = re.search(rb'User-Agent:\s*([^\r\n]+)', payload, re.IGNORECASE)
+                if ua_match:
+                    ua = ua_match.group(1).decode(errors='ignore')
+                    ip_data[src_ip]["http_user_agents"].add(ua)
+                    if 'Windows' in ua:
+                        ip_data[src_ip]["os_from_ua"] = ua.split('Windows')[1].split(';')[0].strip()
+                    elif 'Linux' in ua:
+                        ip_data[src_ip]["os_from_ua"] = 'Linux'
+                    elif 'Mac' in ua:
+                        ip_data[src_ip]["os_from_ua"] = 'macOS'
+                # TLS SNI
+                if TCP in pkt and pkt.dport == 443 and payload.startswith(b'\x16'):
+                    sni_match = re.search(rb'\x00\x00\x00([^\x00]+)', payload)
+                    if sni_match:
+                        ip_data[dst_ip]["hostnames"].add(sni_match.group(1).decode(errors='ignore'))
+                # SNMP community
+                if UDP in pkt and pkt.dport == 161 and payload.startswith(b'\x30'):
+                    parts = payload.split(b'\x04')
+                    if len(parts) >= 2:
+                        community = parts[1].split(b'\x00')[0].decode(errors='ignore')
+                        ip_data[dst_ip]["snmp_communities"].add(community)
+                # CVEs from payload
+                payload_str = payload.decode(errors='ignore')
+                cve_matches = re.findall(r'CVE-\d{4}-\d{4,7}', payload_str, re.IGNORECASE)
+                for cve in cve_matches:
+                    ip_data[dst_ip]["cves"].add(cve.upper())
+                # OT metadata
+                if proto:
+                    metadata = extract_ot_metadata(payload, proto)
+                    if 'firmware_version' in metadata:
+                        ip_data[dst_ip]["firmware_version"] = metadata['firmware_version']
+                    if 'model_number' in metadata:
+                        ip_data[dst_ip]["model_number"] = metadata['model_number']
+                    if 'vendor' in metadata:
+                        ip_data[dst_ip]["ot_vendors"].add(metadata['vendor'])
+                # SMB Windows version
+                if 445 in [pkt.dport, pkt.sport] and payload.startswith(b'\xff\x53\x4d\x42'):
+                    win_ver = detect_windows_version(payload)
+                    if win_ver:
+                        ip_data[dst_ip]["os_from_smb"] = win_ver
+                        ip_data[dst_ip]["os_from_ua"] = win_ver
+
+            # DNS queries
+            if DNS in pkt and pkt[DNS].qr == 0:
+                for q in pkt[DNS].qd:
+                    if q.qname:
+                        ip_data[src_ip]["dns_queries"].add(q.qname.decode(errors='ignore').rstrip('.'))
+
+    # Post-process TTL to guess OS
     for ip, data in ip_data.items():
         if data["ttl_values"]:
             ttl_counts = Counter(data["ttl_values"])
@@ -239,6 +262,7 @@ def analyze_pcap(pcap_path, max_packets=10000):
         else:
             data["os_combined"] = data["os_from_ttl"]
 
+    # Convert sets to lists
     for ip, data in ip_data.items():
         data["macs"] = list(data["macs"])
         data["ports"] = sorted(data["ports"])
