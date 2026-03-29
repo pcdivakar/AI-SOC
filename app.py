@@ -10,7 +10,7 @@ from pcap_analyzer import analyze_pcap
 from asset_classifier import classify_asset
 from vulnerability import fetch_nvd, fetch_epss, fetch_kev_status
 from vulnerability_enrichment import enrich_assets_with_vulnerabilities, fetch_cves_by_keyword
-from chatbot import ask_ai  # Now using Gemini version (chatbot.py)
+from chatbot import ask_ai
 from chart_generator import generate_chart
 
 load_dotenv()
@@ -111,7 +111,7 @@ with st.sidebar:
     st.markdown("---")
     st.markdown("Upload a PCAP file to classify OT assets and discover vulnerabilities.")
     st.markdown("**Supported OT protocols:** Modbus, S7, DNP3, BACnet, EtherNet/IP, IEC 104, OPC UA, CODESYS, Profinet, EtherCAT, MQTT, IEC 61850, and more.")
-    st.markdown("**AI Assistant:** Powered by Google Gemini (free tier).")
+    st.markdown("**AI Assistant:** Integrated AI assistant.")
 
 # Session state
 if 'assets_df' not in st.session_state:
@@ -129,7 +129,7 @@ if 'protocol_counts' not in st.session_state:
 if 'ics_advisory_df' not in st.session_state:
     st.session_state.ics_advisory_df = None
 
-# ------------------ Helper functions (unchanged) ------------------
+# ------------------ Helper functions ------------------
 def prepare_chart_data(df, *cols):
     data = df.copy()
     for col in cols:
@@ -151,7 +151,8 @@ def map_column(label, df_columns):
     special = {
         'ip_address': 'ip', 'ipaddr': 'ip', 'ip': 'ip',
         'asset_type': 'asset_type', 'assettype': 'asset_type',
-        'vendor': 'vendor', 'ports': 'ports', 'port': 'ports',
+        'vendor': 'vendor',
+        'ports': 'ports', 'port': 'ports', 'port_number': 'ports', 'portnumber': 'ports',
         'os': 'os', 'operating_system': 'os',
         'cves': 'cves', 'cve': 'cves',
         'hostnames': 'hostnames', 'hostname': 'hostnames',
@@ -202,7 +203,7 @@ def render_chart(spec, df, protocol_counts=None):
         y_param = None
         if len(params) >= 2:
             y_val = params[1].strip().lower()
-            if y_val in ['count', 'counts', 'number']:
+            if y_val in ['count', 'counts', 'number', 'frequency']:
                 use_count = True
             else:
                 y_param = params[1].strip()
@@ -215,8 +216,14 @@ def render_chart(spec, df, protocol_counts=None):
             title = params[2].strip() if len(params) > 2 else None
 
             if (chart_type in ['bar', 'pie']) and (y_col is None or use_count):
-                counts = df[x_col].value_counts().reset_index()
-                counts.columns = [x_col, 'count']
+                # If x_col is a list column (like ports), we need to explode it first
+                if x_col in df.columns and df[x_col].apply(lambda x: isinstance(x, list)).any():
+                    exploded = df.explode(x_col)[x_col].dropna()
+                    counts = exploded.value_counts().reset_index()
+                    counts.columns = [x_col, 'count']
+                else:
+                    counts = df[x_col].value_counts().reset_index()
+                    counts.columns = [x_col, 'count']
                 if chart_type == 'bar':
                     fig = generate_chart('bar', counts, x_col=x_col, y_col='count', title=title)
                 else:
@@ -230,8 +237,14 @@ def render_chart(spec, df, protocol_counts=None):
                     if y_col and data[y_col].dtype in ['int64', 'float64']:
                         fig = generate_chart('pie', data, names_col=x_col, values_col=y_col, title=title)
                     else:
-                        counts = data[x_col].value_counts().reset_index()
-                        counts.columns = [x_col, 'count']
+                        # fallback to counts
+                        if x_col in data.columns and data[x_col].apply(lambda x: isinstance(x, list)).any():
+                            exploded = data.explode(x_col)[x_col].dropna()
+                            counts = exploded.value_counts().reset_index()
+                            counts.columns = [x_col, 'count']
+                        else:
+                            counts = data[x_col].value_counts().reset_index()
+                            counts.columns = [x_col, 'count']
                         fig = generate_chart('pie', counts, names_col=x_col, values_col='count', title=title)
                 elif chart_type == 'line':
                     fig = generate_chart('line', data, x_col=x_col, y_col=y_col, title=title)
@@ -472,12 +485,12 @@ if st.session_state.analysis_complete:
             else:
                 st.dataframe(df_ics, use_container_width=True)
 
-    # AI Assistant (using Google Gemini)
+    # AI Assistant
     st.markdown("---")
-    st.subheader("🤖 AI Assistant (Powered by Google Gemini)")
+    st.subheader("🤖 AI Assistant")
     st.markdown("Ask about the assets, vulnerabilities, or request a chart or dashboard.")
 
-    # Build context (same as before)
+    # Build context
     asset_summary = []
     for _, row in df_assets.iterrows():
         vuln_text = ""
@@ -507,11 +520,9 @@ if st.session_state.analysis_complete:
             for cve in cves[:10]:
                 context += f"- {cve['cve_id']}: EPSS={cve['epss']}, KEV={cve['kev']}, Desc={cve['description'][:100]}...\n"
 
-    # Add ICS advisory data to context if present
     if st.session_state.ics_advisory_df is not None:
         ics_df = st.session_state.ics_advisory_df
         if not ics_df.empty:
-            # Limit to first 20 to avoid huge context
             ics_sample = ics_df.head(20)
             ics_text = "\n\nICS‑CERT Advisories (first 20):\n"
             for _, row in ics_sample.iterrows():
@@ -553,11 +564,7 @@ if st.session_state.analysis_complete:
                 if ip_context:
                     context += "\n\nSpecific asset details:\n" + "\n".join(ip_context)
 
-            # Use Gemini
-            answer = ask_ai(user_question, context, model="gemini-1.5-flash", gemini_api_key=gemini_api_key)
-
-            with st.expander("Debug: Raw AI response"):
-                st.code(answer)
+            answer = ask_ai(user_question, context, gemini_api_key=gemini_api_key)
 
             # Check for DASHBOARD command
             if answer.strip().upper().startswith("DASHBOARD:"):
