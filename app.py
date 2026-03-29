@@ -10,7 +10,7 @@ from pcap_analyzer import analyze_pcap
 from asset_classifier import classify_asset
 from vulnerability import fetch_nvd, fetch_epss, fetch_kev_status
 from vulnerability_enrichment import enrich_assets_with_vulnerabilities, fetch_cves_by_keyword
-from ollama_chatbot import ask_ai
+from chatbot import ask_ai
 from chart_generator import generate_chart
 
 load_dotenv()
@@ -87,12 +87,9 @@ st.markdown("""
 st.set_page_config(page_title="AI PCAP Analyzer - Deloitte OT Intelligence", layout="wide")
 st.title("🛡️ Deloitte OT Security Analyzer")
 
-# API keys (NVD, etc.)
+# API keys
 nvd_api_key = st.secrets.get("NVD_API_KEY", os.getenv("NVD_API_KEY"))
-
-# Ollama configuration
-ollama_url = st.sidebar.text_input("Ollama API URL", value=os.getenv("OLLAMA_URL", "http://localhost:11434"))
-ollama_model = st.sidebar.text_input("Ollama Model", value=os.getenv("OLLAMA_MODEL", "llama3.2"))
+hf_token = st.secrets.get("HF_API_TOKEN", os.getenv("HF_API_TOKEN"))
 
 # Logo URL (optional)
 logo_url = st.secrets.get("LOGO_URL", None)
@@ -114,7 +111,7 @@ with st.sidebar:
     st.markdown("---")
     st.markdown("Upload a PCAP file to classify OT assets and discover vulnerabilities.")
     st.markdown("**Supported OT protocols:** Modbus, S7, DNP3, BACnet, EtherNet/IP, IEC 104, OPC UA, CODESYS, Profinet, EtherCAT, MQTT, IEC 61850, and more.")
-    st.markdown("**AI Assistant:** Powered by Ollama (local/self‑hosted).")
+    st.markdown("**AI Assistant:** Powered by Hugging Face (free tier).")
 
 # Session state
 if 'assets_df' not in st.session_state:
@@ -376,6 +373,7 @@ def render_chart(spec, df, protocol_counts=None):
 # ------------------ Main app flow ------------------
 uploaded_file = st.file_uploader("Choose a PCAP file", type=["pcap", "pcapng"])
 if uploaded_file and not st.session_state.analysis_complete:
+    # File size check
     file_size_mb = uploaded_file.size / (1024 * 1024)
     if file_size_mb > 200:
         st.warning(f"File size is {file_size_mb:.1f} MB. Processing will be limited to {max_packets} packets. For full analysis, consider reducing packet limit or using a smaller PCAP.")
@@ -393,7 +391,7 @@ if uploaded_file and not st.session_state.analysis_complete:
     with st.spinner("Classifying assets..."):
         classified = []
         for ip, data in ip_data.items():
-            classified.append(classify_asset(data, None))  # No AI for asset classification now
+            classified.append(classify_asset(data, None))  # No AI fallback for asset classification
     st.session_state.assets_df = pd.DataFrame(classified)
     cols = [
         "ip", "asset_type", "confidence", "vendor", "ports", "hostnames",
@@ -475,12 +473,12 @@ if st.session_state.analysis_complete:
             else:
                 st.dataframe(df_ics, use_container_width=True)
 
-    # AI Assistant (using Ollama)
+    # AI Assistant (using Hugging Face)
     st.markdown("---")
-    st.subheader("🤖 AI Assistant (Powered by Ollama)")
+    st.subheader("🤖 AI Assistant (Powered by Hugging Face)")
     st.markdown("Ask about the assets, vulnerabilities, or request a chart or dashboard.")
 
-    # Build context (same as before)
+    # Build context (unchanged)
     asset_summary = []
     for _, row in df_assets.iterrows():
         vuln_text = ""
@@ -556,7 +554,7 @@ if st.session_state.analysis_complete:
                 if ip_context:
                     context += "\n\nSpecific asset details:\n" + "\n".join(ip_context)
 
-            answer = ask_ai(user_question, context, model=ollama_model, ollama_url=ollama_url)
+            answer = ask_ai(user_question, context, model="google/flan-t5-large", hf_token=hf_token)
 
             with st.expander("Debug: Raw AI response"):
                 st.code(answer)
