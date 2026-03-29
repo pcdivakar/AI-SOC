@@ -10,7 +10,7 @@ from pcap_analyzer import analyze_pcap
 from asset_classifier import classify_asset
 from vulnerability import fetch_nvd, fetch_epss, fetch_kev_status
 from vulnerability_enrichment import enrich_assets_with_vulnerabilities, fetch_cves_by_keyword
-from chatbot import ask_ai
+from chatbot import ask_ai  # Now using Gemini version (chatbot.py)
 from chart_generator import generate_chart
 
 load_dotenv()
@@ -87,9 +87,9 @@ st.markdown("""
 st.set_page_config(page_title="AI PCAP Analyzer - Deloitte OT Intelligence", layout="wide")
 st.title("🛡️ Deloitte OT Security Analyzer")
 
-# API keys
+# API keys (NVD + Gemini)
 nvd_api_key = st.secrets.get("NVD_API_KEY", os.getenv("NVD_API_KEY"))
-hf_token = st.secrets.get("HF_API_TOKEN", os.getenv("HF_API_TOKEN"))
+gemini_api_key = st.secrets.get("GEMINI_API_KEY", os.getenv("GEMINI_API_KEY"))
 
 # Logo URL (optional)
 logo_url = st.secrets.get("LOGO_URL", None)
@@ -111,7 +111,7 @@ with st.sidebar:
     st.markdown("---")
     st.markdown("Upload a PCAP file to classify OT assets and discover vulnerabilities.")
     st.markdown("**Supported OT protocols:** Modbus, S7, DNP3, BACnet, EtherNet/IP, IEC 104, OPC UA, CODESYS, Profinet, EtherCAT, MQTT, IEC 61850, and more.")
-    st.markdown("**AI Assistant:** Powered by Hugging Face (free tier).")
+    st.markdown("**AI Assistant:** Powered by Google Gemini (free tier).")
 
 # Session state
 if 'assets_df' not in st.session_state:
@@ -391,7 +391,7 @@ if uploaded_file and not st.session_state.analysis_complete:
     with st.spinner("Classifying assets..."):
         classified = []
         for ip, data in ip_data.items():
-            classified.append(classify_asset(data, None))  # No AI fallback for asset classification
+            classified.append(classify_asset(data, None))  # No AI fallback needed
     st.session_state.assets_df = pd.DataFrame(classified)
     cols = [
         "ip", "asset_type", "confidence", "vendor", "ports", "hostnames",
@@ -456,7 +456,6 @@ if st.session_state.analysis_complete:
                     df_ics = pd.read_csv(ics_file)
                 else:
                     df_ics = pd.read_excel(ics_file, engine='openpyxl')
-                # Store in session state
                 st.session_state.ics_advisory_df = df_ics
                 st.success(f"Loaded {len(df_ics)} advisories.")
             except Exception as e:
@@ -473,12 +472,12 @@ if st.session_state.analysis_complete:
             else:
                 st.dataframe(df_ics, use_container_width=True)
 
-    # AI Assistant (using Hugging Face)
+    # AI Assistant (using Google Gemini)
     st.markdown("---")
-    st.subheader("🤖 AI Assistant (Powered by Hugging Face)")
+    st.subheader("🤖 AI Assistant (Powered by Google Gemini)")
     st.markdown("Ask about the assets, vulnerabilities, or request a chart or dashboard.")
 
-    # Build context (unchanged)
+    # Build context (same as before)
     asset_summary = []
     for _, row in df_assets.iterrows():
         vuln_text = ""
@@ -554,7 +553,8 @@ if st.session_state.analysis_complete:
                 if ip_context:
                     context += "\n\nSpecific asset details:\n" + "\n".join(ip_context)
 
-            answer = ask_ai(user_question, context, model="google/flan-t5-large", hf_token=hf_token)
+            # Use Gemini
+            answer = ask_ai(user_question, context, model="gemini-1.5-flash", gemini_api_key=gemini_api_key)
 
             with st.expander("Debug: Raw AI response"):
                 st.code(answer)
