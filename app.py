@@ -19,68 +19,17 @@ utils.init_db()
 # ------------------ Custom CSS for Deloitte dark green theme ------------------
 st.markdown("""
 <style>
-    /* Sidebar */
-    section[data-testid="stSidebar"] {
-        background-color: #0A2F2F;
-        border-right: 1px solid #1E3A3A;
-    }
-    /* Main content background */
-    .stApp {
-        background-color: #0A2F2F;
-    }
-    /* Headers */
-    h1, h2, h3, h4, h5, h6 {
-        color: #86BC25 !important;
-    }
-    /* Buttons */
-    .stButton > button {
-        background-color: #86BC25;
-        color: #0A2F2F;
-        border: none;
-        border-radius: 0.5rem;
-        font-weight: 600;
-        transition: 0.2s;
-    }
-    .stButton > button:hover {
-        background-color: #6FA31C;
-        color: white;
-    }
-    /* DataFrames */
-    .dataframe {
-        background-color: #1E3A3A;
-        color: #FFFFFF;
-    }
-    /* Expander headers */
-    .streamlit-expanderHeader {
-        background-color: #1E3A3A;
-        color: #86BC25;
-        border-radius: 0.5rem;
-    }
-    /* Tabs */
-    .stTabs [data-baseweb="tab-list"] {
-        gap: 8px;
-    }
-    .stTabs [data-baseweb="tab"] {
-        background-color: #1E3A3A;
-        border-radius: 0.5rem;
-        color: #FFFFFF;
-        padding: 0.5rem 1rem;
-    }
-    .stTabs [aria-selected="true"] {
-        background-color: #86BC25;
-        color: #0A2F2F;
-    }
-    /* Success/Error/Warning messages */
-    .stAlert {
-        background-color: #1E3A3A;
-        border-left-color: #86BC25;
-    }
-    /* Dashboard container */
-    .dashboard-container {
-        background-color: #0A2F2F;
-        border-radius: 1rem;
-        padding: 1rem;
-    }
+    section[data-testid="stSidebar"] { background-color: #0A2F2F; border-right: 1px solid #1E3A3A; }
+    .stApp { background-color: #0A2F2F; }
+    h1, h2, h3, h4, h5, h6 { color: #86BC25 !important; }
+    .stButton > button { background-color: #86BC25; color: #0A2F2F; border: none; border-radius: 0.5rem; font-weight: 600; transition: 0.2s; }
+    .stButton > button:hover { background-color: #6FA31C; color: white; }
+    .dataframe { background-color: #1E3A3A; color: #FFFFFF; }
+    .streamlit-expanderHeader { background-color: #1E3A3A; color: #86BC25; border-radius: 0.5rem; }
+    .stTabs [data-baseweb="tab-list"] { gap: 8px; }
+    .stTabs [data-baseweb="tab"] { background-color: #1E3A3A; border-radius: 0.5rem; color: #FFFFFF; padding: 0.5rem 1rem; }
+    .stTabs [aria-selected="true"] { background-color: #86BC25; color: #0A2F2F; }
+    .stAlert { background-color: #1E3A3A; border-left-color: #86BC25; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -90,44 +39,23 @@ st.title("🛡️ Deloitte OT Security Analyzer")
 # API keys (NVD + Gemini)
 nvd_api_key = st.secrets.get("NVD_API_KEY", os.getenv("NVD_API_KEY"))
 gemini_api_key = st.secrets.get("GEMINI_API_KEY", os.getenv("GEMINI_API_KEY"))
-
-# Logo URL (optional)
 logo_url = st.secrets.get("LOGO_URL", None)
 
 with st.sidebar:
-    if logo_url:
-        st.image(logo_url, width=150)
-    else:
-        st.markdown("## 📊 Deloitte OT Dashboard")
+    if logo_url: st.image(logo_url, width=150)
+    else: st.markdown("## 📊 Deloitte OT Dashboard")
     st.markdown("---")
-    max_packets = st.slider(
-        "Max packets to analyze",
-        min_value=1000,
-        max_value=200000,
-        value=50000,
-        step=5000,
-        help="Larger values give better coverage but use more memory/time."
-    )
+    max_packets = st.slider("Max packets to analyze", 1000, 200000, 50000, 5000)
     st.markdown("---")
     st.markdown("Upload a PCAP file to classify OT assets and discover vulnerabilities.")
     st.markdown("**Supported OT protocols:** Modbus, S7, DNP3, BACnet, EtherNet/IP, IEC 104, OPC UA, CODESYS, Profinet, EtherCAT, MQTT, IEC 61850, and more.")
-    st.markdown("**AI Assistant:** Integrated AI assistant.")
+    st.markdown("**AI Assistant:** Integrated AI assistant (Gemini).")
 
 # Session state
-if 'assets_df' not in st.session_state:
-    st.session_state.assets_df = None
-if 'cve_data' not in st.session_state:
-    st.session_state.cve_data = {}
-if 'keyword_cves' not in st.session_state:
-    st.session_state.keyword_cves = {}
-if 'analysis_complete' not in st.session_state:
-    st.session_state.analysis_complete = False
-if 'dashboard_definition' not in st.session_state:
-    st.session_state.dashboard_definition = None
-if 'protocol_counts' not in st.session_state:
-    st.session_state.protocol_counts = {}
-if 'ics_advisory_df' not in st.session_state:
-    st.session_state.ics_advisory_df = None
+for key in ['assets_df', 'cve_data', 'keyword_cves', 'analysis_complete', 'dashboard_definition', 'protocol_counts', 'ics_advisory_df']:
+    if key not in st.session_state:
+        st.session_state[key] = None if key != 'analysis_complete' else False
+        if key in ['cve_data', 'keyword_cves']: st.session_state[key] = {}
 
 # ------------------ Helper functions ------------------
 def prepare_chart_data(df, *cols):
@@ -138,16 +66,12 @@ def prepare_chart_data(df, *cols):
     return data
 
 def map_column(label, df_columns):
-    if not label or not isinstance(label, str):
-        return None
+    if not label or not isinstance(label, str): return None
     label_clean = label.lower().replace(' ', '_').replace('-', '_')
-    if ',' in label_clean:
-        return None
-    if label_clean in df_columns:
-        return label_clean
+    if ',' in label_clean: return None
+    if label_clean in df_columns: return label_clean
     for col in df_columns:
-        if label_clean in col or col in label_clean:
-            return col
+        if label_clean in col or col in label_clean: return col
     special = {
         'ip_address': 'ip', 'ipaddr': 'ip', 'ip': 'ip',
         'asset_type': 'asset_type', 'assettype': 'asset_type',
@@ -168,23 +92,36 @@ def map_column(label, df_columns):
 
 def parse_chart_spec(spec_str):
     parts = spec_str.split('|')
-    if len(parts) < 2:
-        return None
+    if len(parts) < 2: return None
     raw_type = parts[0].strip()
-    if ',' in raw_type:
-        raw_type = raw_type.split(',')[0].strip()
+    if ',' in raw_type: raw_type = raw_type.split(',')[0].strip()
     chart_type = raw_type.lower()
-    if chart_type == 'map':
-        chart_type = 'scatter_map'
-    elif chart_type == 'scattergeo':
-        chart_type = 'scatter_map'
+    if chart_type == 'map': chart_type = 'scatter_map'
+    elif chart_type == 'scattergeo': chart_type = 'scatter_map'
     return {'type': chart_type, 'params': parts[1:]}
+
+def generate_auto_dashboard(df, protocol_counts):
+    charts = []
+    if 'asset_type' in df.columns and df['asset_type'].nunique() > 0:
+        charts.append({'type': 'bar', 'params': ['asset_type', 'count', 'Asset Type Distribution']})
+    if 'vendor' in df.columns and df['vendor'].nunique() > 0:
+        charts.append({'type': 'pie', 'params': ['vendor', '', 'Vendor Distribution']})
+    if 'os' in df.columns and df['os'].nunique() > 0:
+        charts.append({'type': 'bar', 'params': ['os', 'count', 'Operating System Distribution']})
+    if protocol_counts and len(protocol_counts) > 0:
+        charts.append({'type': 'bar', 'params': ['protocol', 'count', 'OT Protocol Distribution (packet count)']})
+    if 'ports' in df.columns and df['ports'].apply(lambda x: isinstance(x, list)).any():
+        if df['ports'].apply(lambda x: len(x) > 0).any():
+            charts.append({'type': 'bar', 'params': ['ports', 'count', 'Top Open Ports']})
+    if 'cves' in df.columns and df['cves'].apply(lambda x: isinstance(x, list) and len(x) > 0).any():
+        charts.append({'type': 'bar', 'params': ['cves', 'count', 'CVEs per Asset (count)']})
+    return charts
 
 def render_chart(spec, df, protocol_counts=None):
     chart_type = spec['type']
     params = spec['params']
     try:
-        # Special handling for protocol distribution
+        # Protocol distribution special case
         if chart_type in ['bar', 'pie'] and params and ('protocol' in params[0].lower() or 'distribution' in params[0].lower()):
             if protocol_counts and len(protocol_counts) > 0:
                 proto_df = pd.DataFrame(list(protocol_counts.items()), columns=['Protocol', 'Count'])
@@ -195,10 +132,8 @@ def render_chart(spec, df, protocol_counts=None):
                     fig = generate_chart('pie', proto_df, names_col='Protocol', values_col='Count', title=title)
                 return fig
             else:
-                st.warning("No protocol data available for this chart.")
                 return None
 
-        # General case
         use_count = False
         y_param = None
         if len(params) >= 2:
@@ -210,20 +145,20 @@ def render_chart(spec, df, protocol_counts=None):
 
         if chart_type in ['bar', 'pie', 'line', 'scatter', 'area']:
             x_col = map_column(params[0].strip(), df.columns)
-            if x_col is None:
-                raise ValueError(f"Column '{params[0]}' not found.")
+            if x_col is None: return None
             y_col = map_column(y_param, df.columns) if y_param else None
             title = params[2].strip() if len(params) > 2 else None
 
             if (chart_type in ['bar', 'pie']) and (y_col is None or use_count):
-                # If x_col is a list column (like ports), we need to explode it first
                 if x_col in df.columns and df[x_col].apply(lambda x: isinstance(x, list)).any():
                     exploded = df.explode(x_col)[x_col].dropna()
+                    if exploded.empty: return None
                     counts = exploded.value_counts().reset_index()
                     counts.columns = [x_col, 'count']
                 else:
                     counts = df[x_col].value_counts().reset_index()
                     counts.columns = [x_col, 'count']
+                if counts.empty: return None
                 if chart_type == 'bar':
                     fig = generate_chart('bar', counts, x_col=x_col, y_col='count', title=title)
                 else:
@@ -231,20 +166,15 @@ def render_chart(spec, df, protocol_counts=None):
                 return fig
             else:
                 data = prepare_chart_data(df, x_col, y_col)
+                if data.empty: return None
                 if chart_type == 'bar':
                     fig = generate_chart('bar', data, x_col=x_col, y_col=y_col, title=title)
                 elif chart_type == 'pie':
                     if y_col and data[y_col].dtype in ['int64', 'float64']:
                         fig = generate_chart('pie', data, names_col=x_col, values_col=y_col, title=title)
                     else:
-                        # fallback to counts
-                        if x_col in data.columns and data[x_col].apply(lambda x: isinstance(x, list)).any():
-                            exploded = data.explode(x_col)[x_col].dropna()
-                            counts = exploded.value_counts().reset_index()
-                            counts.columns = [x_col, 'count']
-                        else:
-                            counts = data[x_col].value_counts().reset_index()
-                            counts.columns = [x_col, 'count']
+                        counts = data[x_col].value_counts().reset_index()
+                        counts.columns = [x_col, 'count']
                         fig = generate_chart('pie', counts, names_col=x_col, values_col='count', title=title)
                 elif chart_type == 'line':
                     fig = generate_chart('line', data, x_col=x_col, y_col=y_col, title=title)
@@ -253,146 +183,23 @@ def render_chart(spec, df, protocol_counts=None):
                     fig = generate_chart('scatter', data, x_col=x_col, y_col=y_col, color_col=color_col, title=title)
                 elif chart_type == 'area':
                     fig = generate_chart('area', data, x_col=x_col, y_col=y_col, title=title)
-                else:
-                    return None
+                else: return None
                 return fig
-
-        elif chart_type == 'histogram':
-            column = map_column(params[0].strip(), df.columns)
-            if column is None:
-                raise ValueError(f"Column '{params[0]}' not found.")
-            bins = int(params[1]) if len(params) > 1 and params[1].strip().isdigit() else 30
-            title = params[2].strip() if len(params) > 2 else None
-            data = prepare_chart_data(df, column)
-            fig = generate_chart('histogram', data, column=column, bins=bins, title=title)
-            return fig
-
-        elif chart_type == 'box':
-            column = map_column(params[0].strip(), df.columns)
-            if column is None:
-                raise ValueError(f"Column '{params[0]}' not found.")
-            group = map_column(params[1].strip(), df.columns) if len(params) > 1 else None
-            title = params[2].strip() if len(params) > 2 else None
-            data = prepare_chart_data(df, column, group)
-            fig = generate_chart('box', data, column=column, group_col=group, title=title)
-            return fig
-
-        elif chart_type == 'violin':
-            column = map_column(params[0].strip(), df.columns)
-            if column is None:
-                raise ValueError(f"Column '{params[0]}' not found.")
-            group = map_column(params[1].strip(), df.columns) if len(params) > 1 else None
-            title = params[2].strip() if len(params) > 2 else None
-            data = prepare_chart_data(df, column, group)
-            fig = generate_chart('violin', data, column=column, group_col=group, title=title)
-            return fig
-
-        elif chart_type == 'heatmap':
-            if len(params) >= 3:
-                x_axis = map_column(params[0].strip(), df.columns)
-                y_axis = map_column(params[1].strip(), df.columns)
-                z_axis = map_column(params[2].strip(), df.columns)
-                if None in (x_axis, y_axis, z_axis):
-                    raise ValueError("One or more columns not found.")
-                title = params[3].strip() if len(params) > 3 else None
-                data = prepare_chart_data(df, x_axis, y_axis, z_axis)
-                fig = generate_chart('heatmap', data, x_col=x_axis, y_col=y_axis, z_col=z_axis, title=title)
-                return fig
-
-        elif chart_type == 'density_heatmap':
-            if len(params) >= 2:
-                x_axis = map_column(params[0].strip(), df.columns)
-                y_axis = map_column(params[1].strip(), df.columns)
-                if None in (x_axis, y_axis):
-                    raise ValueError("One or more columns not found.")
-                title = params[2].strip() if len(params) > 2 else None
-                data = prepare_chart_data(df, x_axis, y_axis)
-                fig = generate_chart('density_heatmap', data, x_col=x_axis, y_col=y_axis, title=title)
-                return fig
-
-        elif chart_type == 'bubble':
-            if len(params) >= 3:
-                x_axis = map_column(params[0].strip(), df.columns)
-                y_axis = map_column(params[1].strip(), df.columns)
-                size_col = map_column(params[2].strip(), df.columns)
-                if None in (x_axis, y_axis, size_col):
-                    raise ValueError("One or more columns not found.")
-                color_col = map_column(params[3].strip(), df.columns) if len(params) > 3 else None
-                title = params[4].strip() if len(params) > 4 else None
-                data = prepare_chart_data(df, x_axis, y_axis, size_col, color_col)
-                fig = generate_chart('bubble', data, x_col=x_axis, y_col=y_axis, size_col=size_col,
-                                     color_col=color_col, title=title)
-                return fig
-
-        elif chart_type == 'sunburst':
-            if len(params) >= 1:
-                path_str = params[0].strip()
-                path = [map_column(p.strip(), df.columns) for p in path_str.split(',') if p.strip()]
-                path = [p for p in path if p is not None]
-                if not path:
-                    raise ValueError("No valid path columns found.")
-                values = map_column(params[1].strip(), df.columns) if len(params) > 1 else None
-                title = params[2].strip() if len(params) > 2 else None
-                data = prepare_chart_data(df, *path, values)
-                fig = generate_chart('sunburst', data, path=path, values=values, title=title)
-                return fig
-
-        elif chart_type == 'treemap':
-            if len(params) >= 1:
-                path_str = params[0].strip()
-                path = [map_column(p.strip(), df.columns) for p in path_str.split(',') if p.strip()]
-                path = [p for p in path if p is not None]
-                if not path:
-                    raise ValueError("No valid path columns found.")
-                values = map_column(params[1].strip(), df.columns) if len(params) > 1 else None
-                title = params[2].strip() if len(params) > 2 else None
-                data = prepare_chart_data(df, *path, values)
-                fig = generate_chart('treemap', data, path=path, values=values, title=title)
-                return fig
-
-        elif chart_type == 'scatter_map':
-            if len(params) >= 2:
-                lat_col = map_column(params[0].strip(), df.columns)
-                lon_col = map_column(params[1].strip(), df.columns)
-                if None in (lat_col, lon_col):
-                    if 'ip' in df.columns and (lat_col is None or lon_col is None):
-                        df_temp = df.copy()
-                        df_temp['lat'] = df_temp['ip'].apply(lambda x: random.uniform(-90, 90))
-                        df_temp['lon'] = df_temp['ip'].apply(lambda x: random.uniform(-180, 180))
-                        lat_col, lon_col = 'lat', 'lon'
-                        st.info("Using random coordinates for map demonstration. For actual geolocation, integrate an IP geolocation service.")
-                    else:
-                        raise ValueError("Latitude/Longitude columns not found.")
-                else:
-                    df_temp = df
-                color_col = map_column(params[2].strip(), df.columns) if len(params) > 2 else None
-                size_col = map_column(params[3].strip(), df.columns) if len(params) > 3 else None
-                title = params[4].strip() if len(params) > 4 else None
-                data = prepare_chart_data(df_temp, lat_col, lon_col, color_col, size_col)
-                fig = generate_chart('scatter_map', data, lat_col=lat_col, lon_col=lon_col,
-                                     color_col=color_col, size_col=size_col, title=title)
-                return fig
-
-        elif chart_type == 'choropleth':
-            raise ValueError("Choropleth maps require geographic location codes. The current data does not contain such columns. Try using a scatter_map for IP-based locations.")
-
         else:
+            # Other chart types not used in auto dashboard; return None
             return None
-
-    except Exception as e:
-        st.error(f"Chart generation failed: {e}")
+    except Exception:
         return None
 
 # ------------------ Main app flow ------------------
 uploaded_file = st.file_uploader("Choose a PCAP file", type=["pcap", "pcapng"])
 if uploaded_file and not st.session_state.analysis_complete:
-    # File size check
     file_size_mb = uploaded_file.size / (1024 * 1024)
-    if file_size_mb > 200:
-        st.warning(f"File size is {file_size_mb:.1f} MB. Processing will be limited to {max_packets} packets. For full analysis, consider reducing packet limit or using a smaller PCAP.")
     if file_size_mb > 500:
-        st.error(f"File size {file_size_mb:.1f} MB exceeds recommended limit (500 MB). The app may crash. Please use a smaller file or increase packet limit at your own risk.")
+        st.error(f"File too large ({file_size_mb:.1f} MB). Please use a smaller file.")
         st.stop()
+    if file_size_mb > 200:
+        st.warning(f"Large file ({file_size_mb:.1f} MB). Processing limited to {max_packets} packets.")
 
     with tempfile.NamedTemporaryFile(delete=False, suffix=".pcap") as tmp:
         tmp.write(uploaded_file.getbuffer())
@@ -404,13 +211,11 @@ if uploaded_file and not st.session_state.analysis_complete:
     with st.spinner("Classifying assets..."):
         classified = []
         for ip, data in ip_data.items():
-            classified.append(classify_asset(data, None))  # No AI fallback needed
+            classified.append(classify_asset(data, None))
     st.session_state.assets_df = pd.DataFrame(classified)
-    cols = [
-        "ip", "asset_type", "confidence", "vendor", "ports", "hostnames",
-        "ot_protocols", "os", "firmware_version", "model_number",
-        "http_user_agents", "dns_queries", "snmp_communities", "cves"
-    ]
+    cols = ["ip", "asset_type", "confidence", "vendor", "ports", "hostnames", "ot_protocols",
+            "os", "firmware_version", "model_number", "http_user_agents", "dns_queries",
+            "snmp_communities", "cves"]
     st.session_state.assets_df = st.session_state.assets_df[cols]
 
     protocol_counts = {}
@@ -426,13 +231,11 @@ if uploaded_file and not st.session_state.analysis_complete:
 if st.session_state.analysis_complete:
     df_assets = st.session_state.assets_df
 
-    # Vulnerability enrichment (per asset)
     if nvd_api_key and "vulnerabilities" not in df_assets.columns:
-        with st.spinner("Enriching assets with vulnerability data (this may take a moment)..."):
+        with st.spinner("Enriching assets with vulnerability data (NVD, EPSS, KEV)..."):
             df_assets = enrich_assets_with_vulnerabilities(df_assets, nvd_api_key)
             st.session_state.assets_df = df_assets
 
-    # Tabs: Asset Tables, Vulnerability Lookup
     tab_assets, tab_vuln = st.tabs(["📊 Asset Tables", "🔍 Vulnerability Lookup"])
 
     with tab_assets:
@@ -443,24 +246,11 @@ if st.session_state.analysis_complete:
             st.dataframe(ot_assets, use_container_width=True)
         else:
             st.info("No OT/ICS protocols detected.")
-
         st.subheader("📡 All Detected Assets")
         st.dataframe(df_assets, use_container_width=True)
 
     with tab_vuln:
-        # 1) Interactive CVE Dashboard (HTML)
-        html_path = os.path.join(os.path.dirname(__file__), "cve_dashboard.html")
-        if os.path.exists(html_path):
-            with open(html_path, "r", encoding="utf-8") as f:
-                html_content = f.read()
-            st.markdown('<div class="dashboard-container">', unsafe_allow_html=True)
-            st.components.v1.html(html_content, height=1000, scrolling=True)
-            st.markdown('</div>', unsafe_allow_html=True)
-        else:
-            st.warning("Dashboard HTML file not found. Please add 'cve_dashboard.html' to the app directory.")
-
-        # 2) ICS Advisory Upload and Search
-        st.markdown("---")
+        # ICS Advisory Upload (replaces the HTML dashboard)
         st.subheader("📄 ICS‑CERT Advisory Upload")
         ics_file = st.file_uploader("Upload ICS Advisory Excel/CSV file", type=["csv", "xlsx"])
         if ics_file:
@@ -485,12 +275,12 @@ if st.session_state.analysis_complete:
             else:
                 st.dataframe(df_ics, use_container_width=True)
 
-    # AI Assistant
+    # AI Assistant and Auto Dashboard
     st.markdown("---")
     st.subheader("🤖 AI Assistant")
     st.markdown("Ask about the assets, vulnerabilities, or request a chart or dashboard.")
 
-    # Build context
+    # Build context (includes EPSS/KEV data from asset enrichment)
     asset_summary = []
     for _, row in df_assets.iterrows():
         vuln_text = ""
@@ -534,10 +324,23 @@ if st.session_state.analysis_complete:
                 ics_text += f"- {cve}: {title} (Vendor: {vendor}, Product: {product}, Severity: {severity})\n"
             context += ics_text
 
+    # Auto Dashboard button
+    if st.button("📊 Generate Auto Dashboard"):
+        auto_charts = generate_auto_dashboard(df_assets, st.session_state.protocol_counts)
+        if auto_charts:
+            st.session_state.dashboard_definition = {
+                'title': 'Auto‑Generated Dashboard',
+                'charts': auto_charts
+            }
+            st.success("Dashboard generated! Scroll down to view.")
+        else:
+            st.warning("Not enough data to generate a dashboard. Try uploading a PCAP with more assets.")
+
+    # Manual AI query
     user_question = st.text_area("Ask a question, request a chart, or ask for a dashboard (e.g., 'Show me protocol distribution')")
     if st.button("Ask AI") and user_question:
         with st.spinner("Thinking..."):
-            # Auto‑fetch CVEs mentioned in the question
+            # Auto‑fetch CVEs mentioned in the question (using NVD, EPSS, KEV)
             cve_matches = re.findall(r'CVE-\d{4}-\d{4,7}', user_question, re.IGNORECASE)
             if cve_matches and nvd_api_key:
                 for cve in cve_matches:
@@ -600,14 +403,14 @@ if st.session_state.analysis_complete:
                         if fig:
                             st.plotly_chart(fig, use_container_width=True)
                         else:
-                            st.write("Could not generate chart.")
+                            st.write("Could not generate chart (missing data or invalid columns).")
                     else:
                         st.write(answer)
                 else:
                     st.markdown("**AI Response:**")
                     st.write(answer)
 
-    # Display the dashboard if it exists (after AI)
+    # Display the dashboard if it exists (after AI or auto‑generated)
     if st.session_state.dashboard_definition:
         st.markdown("---")
         dash = st.session_state.dashboard_definition
@@ -624,8 +427,6 @@ if st.session_state.analysis_complete:
 
         if not dash['charts']:
             st.warning("Dashboard definition contains no charts.")
-            with st.expander("Raw definition"):
-                st.code(dash, language='json')
         else:
             cols = st.columns(2)
             rendered_count = 0
@@ -635,7 +436,5 @@ if st.session_state.analysis_complete:
                     if fig:
                         st.plotly_chart(fig, use_container_width=True)
                         rendered_count += 1
-                    else:
-                        st.warning(f"Could not render chart: {chart_spec}")
             if rendered_count == 0:
-                st.error("No charts could be rendered. Please request a new dashboard with columns that exist in the asset data (e.g., 'asset_type', 'vendor', 'os').")
+                st.info("No charts could be rendered from the dashboard definition. Try generating an auto dashboard.")
