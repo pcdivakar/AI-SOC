@@ -4,10 +4,6 @@ from oui import lookup_vendor
 from pcap_analyzer import IT_SERVICE_PORTS
 
 def classify_asset(ip_data, groq_api_key=None):
-    """
-    Takes a single IP data dictionary (as returned by analyze_pcap)
-    and returns a classification dictionary with additional fields.
-    """
     ip = ip_data["ip"]
     macs = ip_data["macs"]
     ports = ip_data["ports"]
@@ -20,7 +16,6 @@ def classify_asset(ip_data, groq_api_key=None):
     snmp_communities = ip_data["snmp_communities"]
     cves = ip_data.get("cves", [])
 
-    # Vendor from MAC OUI
     vendor = "Unknown"
     for mac in macs:
         vendor = lookup_vendor(mac)
@@ -29,12 +24,10 @@ def classify_asset(ip_data, groq_api_key=None):
     if ot_vendors:
         vendor = ", ".join(ot_vendors)
 
-    # Asset type
     if ot_asset_types:
         asset_type = " / ".join(ot_asset_types)
         confidence = "high (OT protocol)"
     else:
-        # Check IT service ports
         it_service = None
         for port in ports:
             if port in IT_SERVICE_PORTS:
@@ -44,7 +37,6 @@ def classify_asset(ip_data, groq_api_key=None):
             asset_type = it_service
             confidence = "medium (port based)"
         else:
-            # AI fallback using Groq
             if groq_api_key:
                 asset_type = ai_classify_groq(
                     ip, ports, hostnames, http_user_agents,
@@ -70,11 +62,8 @@ def classify_asset(ip_data, groq_api_key=None):
     }
 
 def ai_classify_groq(ip, ports, hostnames, ua, dns, snmp, macs, groq_api_key):
-    """Use Groq's LLM to classify the device type."""
     if not groq_api_key:
         return "Unknown (AI unavailable)"
-
-    # Build detailed context
     context = f"IP: {ip}\n"
     if macs:
         context += f"MAC(s): {', '.join(macs)}\n"
@@ -94,7 +83,7 @@ def ai_classify_groq(ip, ports, hostnames, ua, dns, snmp, macs, groq_api_key):
     try:
         response = client.chat.completions.create(
             messages=[{"role": "user", "content": context}],
-            model="llama-3.1-8b-instant",   # Updated model
+            model="llama-3.1-8b-instant",
             temperature=0.1,
             max_tokens=20,
         )
