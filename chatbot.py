@@ -1,13 +1,7 @@
 import os
-import re
 from groq import Groq
 
 def ask_ai(question, context, model="llama-3.3-70b-versatile", groq_api_key=None):
-    """
-    Sends a question with context to Groq and returns the answer.
-    If the user asks for a chart, the response will start with "CHART: type|..."
-    which the app will interpret to generate a plot.
-    """
     if not groq_api_key:
         groq_api_key = os.environ.get("GROQ_API_KEY")
         if not groq_api_key:
@@ -16,15 +10,18 @@ def ask_ai(question, context, model="llama-3.3-70b-versatile", groq_api_key=None
     client = Groq(api_key=groq_api_key)
 
     system_msg = (
-        "You are a cybersecurity assistant specialized in analyzing network traffic and vulnerabilities. "
-        "Use the provided context to answer the user's question accurately and concisely. "
-        "The context may include asset details and associated vulnerabilities (CVE IDs with EPSS and KEV status). "
-        "If the user asks for a chart (e.g., 'Show me a bar chart of asset types'), respond with exactly:\n"
-        "CHART: <type>|<x_axis>|<y_axis>|<title>\n"
-        "Where <type> is one of: bar, pie, line, heatmap, scatter.\n"
-        "For pie charts, only x_axis is needed; y_axis can be omitted.\n"
-        "For heatmap, use format: CHART: heatmap|<x_axis>|<y_axis>|<z_axis>|<title>\n"
-        "If the request is not for a chart, answer normally without the CHART prefix."
+        "You are a cybersecurity assistant. Use the provided context to answer questions.\n\n"
+        "If the user asks for a chart, you MUST respond with exactly one line in the following format:\n"
+        "CHART: <type>|<x_axis>|<y_axis>|<title>\n\n"
+        "Valid types: bar, pie, line, heatmap, scatter.\n"
+        "For pie charts, only x_axis is needed; y_axis can be empty.\n"
+        "For heatmap, use: CHART: heatmap|<x_axis>|<y_axis>|<z_axis>|<title>\n\n"
+        "Examples:\n"
+        "- 'Show me a bar chart of asset types' → CHART: bar|asset_type||Asset Types Distribution\n"
+        "- 'Create a pie chart of vendors' → CHART: pie|vendor||Vendor Distribution\n"
+        "- 'Line chart of EPSS scores per CVE' → CHART: line|cve_id|epss|EPSS Scores\n"
+        "- 'Heatmap of ports by IP' → CHART: heatmap|ip|port|cves|Port Activity Heatmap\n\n"
+        "If the question is NOT about a chart, answer normally without the CHART prefix."
     )
     user_msg = f"Context:\n{context}\n\nQuestion: {question}\n\nAnswer:"
 
