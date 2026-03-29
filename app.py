@@ -297,8 +297,7 @@ def render_chart(spec, df):
                 return fig
 
         elif chart_type == 'choropleth':
-            # Choropleth maps require location codes (e.g., country codes). Our data likely doesn't have them.
-            # Instead, we'll skip this chart and inform the user.
+            # Choropleth maps require geographic location codes. Our data likely doesn't have them.
             raise ValueError("Choropleth maps require geographic location codes (e.g., country names or codes). The current data does not contain such columns. Try using a scatter_map for IP-based locations.")
 
         else:
@@ -405,21 +404,42 @@ if st.session_state.analysis_complete:
                 st.rerun()
 
     with tab_dashboard:
+        st.header("AI‑Generated Dashboard")
+        if logo_url:
+            st.image(logo_url, width=200)
+
+        # Clear dashboard button
+        if st.session_state.dashboard_definition is not None:
+            if st.button("🗑️ Clear Dashboard"):
+                st.session_state.dashboard_definition = None
+                st.rerun()
+
         if st.session_state.dashboard_definition:
             dash = st.session_state.dashboard_definition
-            st.header(f"📊 {dash['title']}")
-            if logo_url:
-                st.image(logo_url, width=200)
-            cols = st.columns(2)
-            for i, chart_spec in enumerate(dash['charts']):
-                with cols[i % 2]:
-                    fig = render_chart(chart_spec, df_assets)
-                    if fig:
-                        st.plotly_chart(fig, use_container_width=True)
-                    else:
-                        st.warning(f"Could not render chart: {chart_spec}")
+            st.subheader(dash['title'])
+
+            # If there are no charts, show warning
+            if not dash['charts']:
+                st.warning("Dashboard definition contains no charts. Please request a new dashboard with a valid list of charts.")
+                st.code(dash, language='json')
+            else:
+                # Render charts in a 2‑column grid
+                cols = st.columns(2)
+                rendered_count = 0
+                for i, chart_spec in enumerate(dash['charts']):
+                    with cols[i % 2]:
+                        fig = render_chart(chart_spec, df_assets)
+                        if fig:
+                            st.plotly_chart(fig, use_container_width=True)
+                            rendered_count += 1
+                        else:
+                            st.warning(f"Could not render chart: {chart_spec}")
+                if rendered_count == 0:
+                    st.error("No charts could be rendered. The dashboard definitions may contain columns that don't exist in the asset data. Please request a new dashboard with simpler columns like 'asset_type', 'vendor', or 'os'.")
+                    with st.expander("Show raw dashboard definition"):
+                        st.code(dash, language='json')
         else:
-            st.info("No dashboard generated yet. Ask the AI Assistant to create a dashboard (e.g., 'Create a security dashboard with asset types, vendors, and OS distribution').")
+            st.info("No dashboard generated yet. Go to the AI Assistant below and ask something like: 'Create a security dashboard showing asset types, vendors, and OS distribution'.")
 
     # AI Assistant (chat interface)
     if groq_api_key:
