@@ -87,7 +87,10 @@ def parse_chart_spec(spec_str):
     parts = spec_str.split('|')
     if len(parts) < 2:
         return None
-    chart_type = parts[0].strip().lower()
+    raw_type = parts[0].strip()
+    if ',' in raw_type:
+        raw_type = raw_type.split(',')[0].strip()
+    chart_type = raw_type.lower()
     if chart_type == 'map':
         chart_type = 'scatter_map'
     elif chart_type == 'scattergeo':
@@ -474,7 +477,13 @@ if st.session_state.analysis_complete:
         if st.session_state.dashboard_definition:
             st.markdown("---")
             dash = st.session_state.dashboard_definition
-            st.header(f"📊 {dash['title']} Dashboard")
+            # If a logo is present, we omit the dashboard title to avoid duplicate branding
+            if not logo_url:
+                st.header(f"📊 {dash['title']} Dashboard")
+            else:
+                # Show only a small header or nothing; the logo already contains branding
+                st.markdown("### Dashboard")
+
             if logo_url:
                 st.image(logo_url, width=200)
 
