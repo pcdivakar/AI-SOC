@@ -19,7 +19,6 @@ def classify_asset(ip_data, groq_api_key=None):
     model_number = ip_data.get("model_number", "Unknown")
     os_combined = ip_data.get("os_combined", "Unknown")
 
-    # Vendor from MAC OUI
     vendor = "Unknown"
     for mac in macs:
         vendor = lookup_vendor(mac)
@@ -28,7 +27,6 @@ def classify_asset(ip_data, groq_api_key=None):
     if ot_vendors:
         vendor = ", ".join(ot_vendors)
 
-    # Asset type
     if ot_asset_types:
         asset_type = " / ".join(ot_asset_types)
         confidence = "high (OT protocol)"
